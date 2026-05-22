@@ -1,0 +1,30 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+secrets/
+
+# macOS
+.DS_Store
+
+# Go
+backend/bin/
+backend/tmp/
+*.test
+*.out
+
+# Swift / Xcode
+ios/build/
+ios/DerivedData/
+*.xcuserstate
+xcuserdata/
+.swiftpm/
+
+# Supabase
+supabase/.branches/
+supabase/.temp/
+
+# Editor
+.idea/
+*.swp
