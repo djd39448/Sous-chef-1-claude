@@ -334,7 +334,10 @@ Before the call, pick a random cuisine from:
 Greek, Indian-inspired, French bistro`. Set `seasonalFocus` to
 `"hearty, warming"` if the current month is Oct–Feb, else `"fresh, lighter"`.
 Build `ingredientList` from the user's `ingredient_memory` names (or
-`"common pantry items"`). Build `cookbookContext` from up to 20 cookbook titles.
+`"common pantry items"`). Build `cookbookContext` from up to 20 cookbook
+titles: when the user has saved recipes it is `"The user has these saved
+recipes they may enjoy — feel free to include some: <title>, <title>, ...."`;
+otherwise it is the empty string.
 
 System prompt:
 ```

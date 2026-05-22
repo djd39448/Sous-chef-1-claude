@@ -27,14 +27,14 @@ the only thing the tracks share.
 
 Phases 0–2 need nothing. The remaining phases need Dave to provide:
 
-- [ ] **Xcode** — install from the Mac App Store (~12 GB). The long pole; start first.
-      Only Command Line Tools are installed today. Needed for Phase 4.
+- [x] **Xcode** — installed (Xcode 26.5), after upgrading the Mac to
+      macOS Tahoe 26.5 (the App Store Xcode requires macOS 26).
 - [ ] **Supabase** — create an account and a new project (free tier). Provides
       Postgres + Auth. Needed to apply Phase 2 migrations and for Phase 4.
 - [ ] **OpenAI API key** — a key with billing enabled. The original used Replit's
-      OpenAI proxy, which is gone. Needed for Phase 3.
+      OpenAI proxy, which is gone. Needed to run Phase 3 end-to-end.
 - [ ] **AWS account** — for hosting the Go backend. Needed for Phase 5.
-- [ ] **Go toolchain** — `brew install go`. Needed for Phase 3. (Astra can install.)
+- [x] **Go toolchain** — installed (go 1.26.3).
 - [ ] **Supabase CLI** — `brew install supabase/tap/supabase`. Needed to apply
       migrations. (Astra can install.)
 - [ ] **Apple Developer account** — *not* needed for the Simulator. Needed only
@@ -65,4 +65,13 @@ Deviations from a literal 1:1 port, and why.
 ## Status
 
 - **2026-05-22** — Phases 0–2 complete: monorepo scaffolded, contract authored,
-  Supabase schema written. Phases 3–5 pending prerequisites above.
+  Supabase schema written.
+- **2026-05-22** — Phase 3 complete: the Go backend (`backend/`) implements all
+  25 endpoints, SSE streaming, Supabase JWT auth, and direct OpenAI integration,
+  built against the contract. `go build`, `go vet`, and the unit test pass. Not
+  yet exercised end-to-end — that needs a Supabase database URL and an OpenAI
+  key (see prerequisites). Phases 4–5 pending.
+- A contract clarification was made while building Phase 3: `GET
+  /api/kitchen/conversation/:id` now follows the same ownership rule as every
+  other `:id` endpoint (`403` for another user's row, `404` for missing) —
+  the previous wording ("404 if not owned") contradicted the general rule.

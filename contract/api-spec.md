@@ -106,8 +106,9 @@ Returns `Conversation[]`, ordered by `updatedAt` descending. No messages.
 Creates a new conversation (title `"Kitchen Chat"`). Returns the `Conversation`.
 
 ### `GET /api/kitchen/conversation/:id`
-Returns `ConversationWithMessages` for `:id` if owned by the caller. `404` if
-not found or not owned.
+Returns `ConversationWithMessages` for `:id`. Ownership is enforced per the
+general rule above: `403` if the conversation belongs to another user, `404`
+if it does not exist.
 
 ### `POST /api/kitchen/message` — SSE
 Send a chat message; the assistant's reply streams back.
