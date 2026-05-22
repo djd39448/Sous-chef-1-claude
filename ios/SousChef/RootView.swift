@@ -1,0 +1,127 @@
+import SwiftUI
+
+/// The five primary tabs.
+enum Tab: String, CaseIterable, Identifiable {
+    case home, plan, cook, shop, chat
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .home: return "Home"
+        case .plan: return "Plan"
+        case .cook: return "Cookbook"
+        case .shop: return "Shopping"
+        case .chat: return "Chat"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .home: return "home"
+        case .plan: return "calendar"
+        case .cook: return "book"
+        case .shop: return "cart"
+        case .chat: return "chat"
+        }
+    }
+    var iconActive: String {
+        switch self {
+        case .home: return "homeFill"
+        case .plan: return "calendar"
+        case .cook: return "bookFill"
+        case .shop: return "cartFill"
+        case .chat: return "chatFill"
+        }
+    }
+}
+
+/// Root: the sign-in gate, then the main tabbed app.
+struct RootView: View {
+    @State private var signedIn = false
+
+    var body: some View {
+        Group {
+            if signedIn {
+                MainView()
+            } else {
+                SignInScreen { withAnimation(.easeInOut(duration: 0.35)) { signedIn = true } }
+            }
+        }
+    }
+}
+
+/// The signed-in app: five tabs behind a custom frosted tab bar, with the
+/// recipe detail presented full-screen over everything.
+struct MainView: View {
+    @State private var tab: Tab = .home
+    @State private var showRecipe = false
+
+    var body: some View {
+        tabContent
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                CustomTabBar(active: tab) { tab = $0 }
+            }
+            .fullScreenCover(isPresented: $showRecipe) {
+                RecipeScreen { showRecipe = false }
+            }
+    }
+
+    @ViewBuilder
+    private var tabContent: some View {
+        switch tab {
+        case .home:
+            NavigationStack {
+                HomeScreen(goToTab: { tab = $0 }, openRecipe: { showRecipe = true })
+            }
+        case .plan:
+            NavigationStack {
+                PlanScreen(goToTab: { tab = $0 }, openRecipe: { showRecipe = true })
+            }
+        case .cook:
+            NavigationStack {
+                CookbookScreen(openRecipe: { showRecipe = true })
+            }
+        case .shop:
+            NavigationStack { ShoppingScreen() }
+        case .chat:
+            NavigationStack { ChatScreen() }
+        }
+    }
+}
+
+/// The custom bottom tab bar — five items, cream frosted glass, terracotta active.
+struct CustomTabBar: View {
+    let active: Tab
+    let onSelect: (Tab) -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Tab.allCases) { item in
+                let on = item == active
+                Button { onSelect(item) } label: {
+                    VStack(spacing: 2) {
+                        SCIcon(on ? item.iconActive : item.icon,
+                               size: 24,
+                               color: on ? Theme.terra : Theme.ink3,
+                               weight: on ? .semibold : .regular)
+                        Text(item.label)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(on ? Theme.terra : Theme.ink3)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+        .background {
+            ZStack {
+                Rectangle().fill(.ultraThinMaterial)
+                Theme.bg.opacity(0.82)
+            }
+            .ignoresSafeArea(edges: .bottom)
+        }
+        .overlay(alignment: .top) { Hairline() }
+    }
+}

@@ -20,7 +20,7 @@ the only thing the tracks share.
 | 1 | Contract | `contract/` — API spec, data model, AI behavior | — |
 | 2 | Data | `supabase/` — schema migrations + RLS | — |
 | 3 | Backend | `backend/` — Go REST API, all endpoints, SSE, OpenAI | Go install, OpenAI key |
-| 4 | iOS | `ios/` — SwiftUI app, 6 screens, Sign in with Apple | Xcode, Supabase project |
+| 4 | iOS | `ios/` — SwiftUI app, 8 screens, Sign in with Apple | Xcode, Supabase project |
 | 5 | Deploy | Backend on AWS, app running in iOS Simulator | AWS account |
 
 ## Prerequisites checklist
@@ -75,3 +75,11 @@ Deviations from a literal 1:1 port, and why.
   /api/kitchen/conversation/:id` now follows the same ownership rule as every
   other `:id` endpoint (`403` for another user's row, `404` for missing) —
   the previous wording ("404 if not owned") contradicted the general rule.
+- **2026-05-22** — Phase 4 UI built: the SwiftUI app at `ios/SousChef.xcodeproj`
+  implements the *Sous Chef iOS* design handoff bundle (8 screens — sign-in,
+  home, plan, calendar, cookbook, recipe detail, shopping, chat). Includes the
+  full design system (OKLCH color tokens, serif display + SF Pro body,
+  terracotta/sage palette), a custom frosted tab bar, and the prototype's
+  light interactions (shopping toggle, recipe ingredient toggle, calendar
+  segmented). `xcodebuild` for the iOS Simulator passes with zero warnings.
+  Running against mock data; wiring to the Go backend is the next step.
