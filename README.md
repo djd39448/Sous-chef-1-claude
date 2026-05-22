@@ -26,14 +26,25 @@ against that single shared contract.
 ## Layout
 
 ```
-contract/    The single source of truth — API spec, data model, AI behavior.
-supabase/    Database schema as SQL migrations + row-level security.
-backend/     Go REST API. Builds against contract/.
-ios/         SwiftUI app. Builds against contract/.
-docs/        Port plan, prerequisites, decisions.
+contract/             The single source of truth — API spec, data model, AI behavior.
+supabase/             Database schema as SQL migrations + row-level security.
+backend/              Go REST API. Builds against contract/.
+ios/                  SwiftUI app. Builds against contract/.
+docs/PORT_PLAN.md     Phased roadmap, prerequisites, and the decisions log.
+CODING_STANDARDS.md   Non-negotiable stack standard (sc-00 — sc-09).
+BUILD_LOG.md          Phase-by-phase build progress, oldest first.
+CHANGE_LOG.md         Decisions and pivots, newest first.
+CLAUDE.md             Working rules + the docs-update protocol.
 ```
+
+## Working rules
+
+See [`CLAUDE.md`](CLAUDE.md) for the docs-update protocol — what to record
+when, where, and why. The short version: the contract changes first; each
+phase appends to `BUILD_LOG.md`; each pivot is a new entry in `CHANGE_LOG.md`.
 
 ## Status
 
-See [docs/PORT_PLAN.md](docs/PORT_PLAN.md) for the phased roadmap, current
-progress, and the prerequisites checklist.
+See [docs/PORT_PLAN.md](docs/PORT_PLAN.md) for the phased roadmap and the
+prerequisites checklist, and [`BUILD_LOG.md`](BUILD_LOG.md) for what's
+actually built.
