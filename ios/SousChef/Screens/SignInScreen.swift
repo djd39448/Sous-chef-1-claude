@@ -50,18 +50,20 @@ struct SignInScreen: View {
             .background(Theme.terraSoft)
             .clipShape(RoundedRectangle(cornerRadius: 10))
 
-            (Text("Sous\n").foregroundColor(Theme.ink)
-             + Text("Chef").foregroundColor(Theme.terra).italic())
-                .font(Theme.display(52, weight: .regular))
-                .tracking(-1.8)
-                .lineSpacing(-2)
-                .padding(.top, 14)
-                .padding(.bottom, 12)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Sous").foregroundStyle(Theme.ink)
+                Text("Chef").foregroundStyle(Theme.terra).italic()
+            }
+            .font(Theme.display(52, weight: .regular))
+            .tracking(-1.8)
+            .padding(.top, 14)
+            .padding(.bottom, 12)
 
             Text("Decide what's for dinner, plan your week, and shop without thinking.")
                 .font(Theme.sans(16))
                 .foregroundStyle(Theme.ink2)
                 .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 290, alignment: .leading)
         }
     }
@@ -112,6 +114,8 @@ struct SignInScreen: View {
                 .foregroundStyle(Theme.ink3)
                 .multilineTextAlignment(.center)
                 .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity)
         }
         .padding(.bottom, 38)
     }
