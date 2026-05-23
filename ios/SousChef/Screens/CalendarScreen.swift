@@ -32,8 +32,10 @@ struct CalendarScreen: View {
             VStack(spacing: 0) {
                 NavBar(
                     largeTitle: monthTitle,
-                    leading: AnyView(IconButton(icon: "chevL") { dismiss() }),
-                    trailing: AnyView(IconButton(icon: "chevR"))
+                    leading: AnyView(IconButton(icon: "chevL") { dismiss() })
+                    // Trailing chevR removed (B-20) — it duplicated nothing
+                    // and went nowhere. Month navigation is the chev row
+                    // below the NavBar.
                 )
                 monthNav
                 segmented
@@ -70,8 +72,12 @@ struct CalendarScreen: View {
     // MARK: Header / nav
 
     private var monthTitle: String {
+        // displayedMonth is built with DateUtil.utc, so we must format it in
+        // the same zone — otherwise EDT pushes May 1 00:00 UTC back to April
+        // 30 20:00 local and the title reads one month behind the grid.
         let f = DateFormatter()
         f.dateFormat = "MMMM yyyy"
+        f.timeZone = DateUtil.utc.timeZone
         return f.string(from: displayedMonth)
     }
 
@@ -314,10 +320,13 @@ struct CalendarScreen: View {
     }
 
     private var detailSubtitle: String {
+        // Copy doesn't claim "tap a marked day…" anymore (B-19) — the cells
+        // aren't tappable yet, and we'd rather not promise UI we haven't
+        // shipped. Restore that copy when the per-day sheet lands.
         if case .failed(let msg) = loadState { return msg }
         return mode == .plans
-            ? "Tap a marked day to plan or review meals."
-            : "Tap a marked day to see that week's list."
+            ? "Marked days have a meal plan for that week."
+            : "Marked days have a shopping list for that week."
     }
 
     // MARK: Utility

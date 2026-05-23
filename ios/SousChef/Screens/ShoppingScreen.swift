@@ -38,11 +38,11 @@ struct ShoppingScreen: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                NavBar(
-                    largeTitle: "Shopping",
-                    leading: AnyView(IconButton(icon: "filter")),
-                    trailing: AnyView(IconButton(icon: "plus", color: Theme.terra))
-                )
+                NavBar(largeTitle: "Shopping")
+                // Filter and + icons removed in the dead-button cull (B-13).
+                // Items are added/modified via the chat's create_shopping_list
+                // tool; per-item filters need backend categorization we
+                // don't have yet.
                 content
             }
         }

@@ -11,6 +11,18 @@ Severity legend:
 - **P1** — Visible defect that erodes trust (wrong data shown, dead-end, crashy).
 - **P2** — Polish (copy, spacing, missing affordance, follow-up wiring).
 
+## Status
+
+- **Fixed (15):** B-01, B-02, B-03, B-04, B-06, B-07, B-08, B-09, B-10, B-11,
+  B-12, B-13, B-14, B-15, B-16, B-17, B-18, B-19, B-20.
+- **Deferred (2):** B-05 (stock-photo matching — waits for the
+  regenerate-image wiring), B-21 (composer software-keyboard quirk — needs
+  real-device test rather than simulator).
+- **Not a bug (1):** B-22.
+
+The "Fixed" entries below stay in the file for history. They link to the
+commit and explain the resolution.
+
 ---
 
 ## P0 — Broken core flows

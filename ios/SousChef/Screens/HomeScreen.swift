@@ -93,12 +93,15 @@ struct HomeScreen: View {
     }
 
     private var greeting: String {
+        // Greeting tone — "Afternoon, Dave." when we know a first name,
+        // otherwise just "Good afternoon." rather than pasting in the email
+        // handle (B-15: "Afternoon, test2." reads wrong).
         let hour = Calendar.current.component(.hour, from: Date())
         let timeWord = hour < 12 ? "Morning" : hour < 17 ? "Afternoon" : "Evening"
-        let name = profile?.firstName
-            ?? profile?.email?.split(separator: "@").first.map(String.init)
-            ?? "there"
-        return "\(timeWord), \(name)."
+        if let name = profile?.firstName, !name.isEmpty {
+            return "\(timeWord), \(name)."
+        }
+        return "Good \(timeWord.lowercased())."
     }
 
     private var todayHeader: String {
@@ -246,30 +249,19 @@ struct HomeScreen: View {
                     .foregroundStyle(Theme.ink)
                 tonightMeta(notes: meal.notes)
                     .padding(.top, 8)
-                HStack(spacing: 8) {
-                    Button { openRecipe(.mealPlanDay(meal)) } label: {
-                        Text("View Recipe")
-                            .font(Theme.sans(14, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 44)
-                            .background(Theme.ink)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                    }
-                    .buttonStyle(.plain)
-                    Button { } label: {
-                        HStack(spacing: 6) {
-                            SCIcon("swap", size: 15, color: Theme.ink)
-                            Text("Swap").font(Theme.sans(14, weight: .medium))
-                        }
-                        .foregroundStyle(Theme.ink)
-                        .padding(.horizontal, 16)
+                // Swap button removed (B-09) — there's no swap flow yet, and
+                // a button that does nothing is worse than no button. Add it
+                // back when the recipe-chat update_meal tool is wired.
+                Button { openRecipe(.mealPlanDay(meal)) } label: {
+                    Text("View Recipe")
+                        .font(Theme.sans(14, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
                         .frame(height: 44)
-                        .background(Theme.elev)
+                        .background(Theme.ink)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
-                    }
-                    .buttonStyle(.plain)
                 }
+                .buttonStyle(.plain)
                 .padding(.top, 16)
             }
             .padding(.horizontal, 20)
@@ -281,9 +273,15 @@ struct HomeScreen: View {
     }
 
     private func tonightMeta(notes: String?) -> some View {
-        HStack(spacing: 14) {
-            metaItem("clock", notes ?? "—")
-            metaDot
+        // Skip the clock chip entirely when notes are empty (B-16) — the
+        // bare "—" next to "Serves 4 · Easy" reads as broken UI.
+        let trimmedNotes = notes?.trimmingCharacters(in: .whitespaces)
+        let hasNotes = !(trimmedNotes?.isEmpty ?? true)
+        return HStack(spacing: 14) {
+            if hasNotes, let n = trimmedNotes {
+                metaItem("clock", n)
+                metaDot
+            }
             metaItem("people", "Serves 4")
             metaDot
             metaItem("flame", "Easy")
@@ -355,7 +353,14 @@ struct HomeScreen: View {
                     if weekDays.isEmpty {
                         ForEach(0..<7, id: \.self) { _ in placeholderDayCard }
                     } else {
-                        ForEach(weekDays) { day in dayCard(day) }
+                        ForEach(weekDays) { day in
+                            // Wrap in Button so the cards actually go somewhere
+                            // (B-14) — users naturally try to tap them.
+                            Button { openRecipe(.mealPlanDay(day)) } label: {
+                                dayCard(day)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
                 .padding(.horizontal, 20)

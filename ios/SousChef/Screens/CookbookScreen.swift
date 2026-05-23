@@ -18,18 +18,18 @@ struct CookbookScreen: View {
         case failed(String)
     }
 
-    private let filters = ["All", "Quick", "Italian", "Asian", "Mexican", "Vegetarian"]
+    // Filter list removed in the dead-button cull (B-12); tagging on
+    // cookbook_recipes is a follow-up.
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                NavBar(
-                    largeTitle: "Cookbook",
-                    leading: AnyView(IconButton(icon: "search")),
-                    trailing: AnyView(IconButton(icon: "plus", color: Theme.terra))
-                )
-                filterChips
+                NavBar(largeTitle: "Cookbook")
+                // Filter chips, search, and the + button were all decorative
+                // (B-12). Filters require backend tagging we don't have yet;
+                // saving happens from the chat or the Recipe bookmark button.
+                // Both reappear once their backends exist.
                 content
             }
         }
@@ -54,26 +54,6 @@ struct CookbookScreen: View {
         } catch {
             loadState = .failed(error.localizedDescription)
         }
-    }
-
-    // MARK: Filter chips (mock — no tagging in the contract yet)
-
-    private var filterChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(Array(filters.enumerated()), id: \.offset) { index, label in
-                    let countLabel: String = {
-                        if index == 0, case .loaded(let list) = loadState {
-                            return "All · \(list.count)"
-                        }
-                        return label
-                    }()
-                    Chip(label: countLabel, active: index == 0)
-                }
-            }
-            .padding(.horizontal, 16)
-        }
-        .padding(.bottom, 16)
     }
 
     // MARK: Content (loading / empty / loaded / error)

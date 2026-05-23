@@ -39,13 +39,14 @@ struct RecipeScreen: View {
     @State private var saveError: String?
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            scrollContent
-            floatingPill
-        }
-        .background(Theme.bg)
-        .overlay(alignment: .top) { topButtons }
-        .task { await load() }
+        // The floating "Ask about this recipe…" pill is hidden until
+        // /api/kitchen/recipe-message is wired (B-08). Shipping a dead
+        // text-field-shaped affordance teaches users it's broken; better to
+        // have one less button and add it back once it does something.
+        scrollContent
+            .background(Theme.bg)
+            .overlay(alignment: .top) { topButtons }
+            .task { await load() }
     }
 
     private var client: APIClient {
@@ -145,10 +146,13 @@ struct RecipeScreen: View {
                     errorCard(errorMessage)
                 }
                 recipeBody
-                Color.clear.frame(height: 130)   // clearance for the floating pill
+                Color.clear.frame(height: 32)
             }
         }
-        .ignoresSafeArea(edges: .top)
+        // Intentionally NOT .ignoresSafeArea(edges: .top): the hero used to
+        // bleed under the Dynamic Island, but on scroll the title text and
+        // the "AI GENERATED" pill ended up on top of the system clock. The
+        // recipe screen now respects the safe area so nothing collides.
     }
 
     private var hero: some View {
@@ -225,12 +229,13 @@ struct RecipeScreen: View {
         .padding(.horizontal, 20)
     }
 
-    /// Inline Markdown — bold / italic / links render; block elements like
-    /// headings and lists pass through as plain (still readable) text. A
-    /// proper structured renderer (Ingredients + Instructions cards from
-    /// the design) is a follow-up.
+    /// Line-by-line Markdown renderer. `AttributedString` with `.full` parses
+    /// block elements but then collapses everything into one paragraph with
+    /// no headings or bullets — useless for a recipe. Instead we walk the
+    /// content, render each block at a time with the right font/leading, and
+    /// stitch them together. Inline markdown (bold/italic/links) still works
+    /// because each line passes through `AttributedString(markdown:)`.
     private var renderedContent: AttributedString {
-        // Drop the leading "# Title" line since we render the title above.
         let body: String = {
             var s = content
             if s.hasPrefix("# ") {
@@ -241,15 +246,71 @@ struct RecipeScreen: View {
             }
             return s
         }()
+
+        var out = AttributedString()
+        let lines = body.components(separatedBy: "\n")
+        for (idx, raw) in lines.enumerated() {
+            let line = raw
+            let isLast = idx == lines.count - 1
+            let suffix = isLast ? "" : "\n"
+
+            // ## Heading — bold, larger, with a blank line above (except at start).
+            if line.hasPrefix("## ") {
+                let title = String(line.dropFirst(3))
+                if idx > 0 { out += AttributedString("\n") }
+                var attr = AttributedString(title)
+                attr.font = Theme.display(18, weight: .medium)
+                attr.foregroundColor = Theme.ink
+                out += attr
+                out += AttributedString(suffix)
+                continue
+            }
+
+            // - Bullet list item — replace dash with a real bullet.
+            if line.hasPrefix("- ") {
+                let rest = String(line.dropFirst(2))
+                out += AttributedString("•  ")
+                out += inlineMarkdown(rest)
+                out += AttributedString(suffix)
+                continue
+            }
+
+            // 1. / 2. / ... Numbered list item — keep the number, render rest.
+            if let dotIdx = line.firstIndex(of: "."),
+               line.distance(from: line.startIndex, to: dotIdx) <= 3,
+               Int(line[line.startIndex..<dotIdx]) != nil,
+               line.distance(from: dotIdx, to: line.endIndex) > 2,
+               line[line.index(after: dotIdx)] == " " {
+                let number = String(line[line.startIndex...dotIdx])
+                let rest = String(line[line.index(dotIdx, offsetBy: 2)...])
+                var prefix = AttributedString("\(number)  ")
+                prefix.font = Theme.sans(15, weight: .semibold)
+                prefix.foregroundColor = Theme.ink
+                out += prefix
+                out += inlineMarkdown(rest)
+                out += AttributedString(suffix)
+                continue
+            }
+
+            // Plain paragraph (or the Prep/Cook/Serves line with **bold**).
+            out += inlineMarkdown(line)
+            out += AttributedString(suffix)
+        }
+        return out
+    }
+
+    /// Parse one line as inline-only markdown (bold, italic, links). Falls
+    /// back to a plain string if parsing fails.
+    private func inlineMarkdown(_ s: String) -> AttributedString {
         if let attr = try? AttributedString(
-            markdown: body,
+            markdown: s,
             options: AttributedString.MarkdownParsingOptions(
                 interpretedSyntax: .inlineOnlyPreservingWhitespace
             )
         ) {
             return attr
         }
-        return AttributedString(body)
+        return AttributedString(s)
     }
 
     private func errorCard(_ message: String) -> some View {
@@ -350,30 +411,7 @@ struct RecipeScreen: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: Floating pill (placeholder — /recipe-message wires in a later pass)
-
-    private var floatingPill: some View {
-        HStack(spacing: 10) {
-            SCIcon("sparkle", size: 16, color: Theme.butter, weight: .bold)
-            Text("Ask about this recipe…")
-                .font(Theme.sans(14, weight: .medium))
-                .foregroundStyle(.white.opacity(0.7))
-            Spacer(minLength: 0)
-            Button { } label: {
-                SCIcon("send", size: 18, color: .white)
-                    .frame(width: 40, height: 40)
-                    .background(Theme.terra)
-                    .clipShape(Circle())
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.leading, 18)
-        .padding(.trailing, 8)
-        .frame(height: 56)
-        .background(Theme.ink)
-        .clipShape(Capsule())
-        .shadow(color: .black.opacity(0.35), radius: 15, y: 12)
-        .padding(.horizontal, 16)
-        .padding(.bottom, 24)
-    }
+    // The "Ask about this recipe…" floating pill was removed in the
+    // dead-button cull (B-08). It will come back when
+    // /api/kitchen/recipe-message is wired.
 }

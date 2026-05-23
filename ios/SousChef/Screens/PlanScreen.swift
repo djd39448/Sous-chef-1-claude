@@ -24,8 +24,11 @@ struct PlanScreen: View {
             VStack(spacing: 0) {
                 NavBar(
                     largeTitle: "Meal Plan",
-                    leading: AnyView(IconButton(icon: "calendar") { showCalendar = true }),
-                    trailing: AnyView(IconButton(icon: "sparkle", color: Theme.terra))
+                    leading: AnyView(IconButton(icon: "calendar") { showCalendar = true })
+                    // Trailing sparkle (regenerate) removed in the dead-button
+                    // cull — the chat is already the canonical way to ask for
+                    // a new plan, and a button that does nothing is worse than
+                    // no button at all.
                 )
                 weekSelector
                 content
@@ -61,21 +64,20 @@ struct PlanScreen: View {
     // MARK: Week selector
 
     private var weekSelector: some View {
-        HStack(spacing: 10) {
-            circleButton("chevL")
-            Text(weekRangeText)
-                .font(Theme.sans(14, weight: .semibold))
-                .foregroundStyle(Theme.ink)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity)
-                .frame(height: 40)
-                .background(Theme.card)
-                .clipShape(Capsule())
-                .overlay(Capsule().strokeBorder(Theme.hairline2, lineWidth: 1))
-            circleButton("chevR")
-        }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 16)
+        // Week-shift arrows removed (B-11) — they were never wired and the
+        // backend doesn't yet support fetching a different week's plan. Add
+        // them back when /api/kitchen/meal-plan accepts a weekStart query.
+        Text(weekRangeText)
+            .font(Theme.sans(14, weight: .semibold))
+            .foregroundStyle(Theme.ink)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity)
+            .frame(height: 40)
+            .background(Theme.card)
+            .clipShape(Capsule())
+            .overlay(Capsule().strokeBorder(Theme.hairline2, lineWidth: 1))
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
     }
 
     private var weekRangeText: String {
@@ -83,13 +85,8 @@ struct PlanScreen: View {
         return DateUtil.weekRangeString(weekStart: plan.weekStartDate)
     }
 
-    private func circleButton(_ icon: String) -> some View {
-        SCIcon(icon, size: 18, color: Theme.ink)
-            .frame(width: 36, height: 36)
-            .background(Theme.card)
-            .clipShape(Circle())
-            .overlay(Circle().strokeBorder(Theme.hairline2, lineWidth: 1))
-    }
+    // circleButton(_:) was used for the dead week-shift arrows (B-11) — both
+    // removed in the same change.
 
     // MARK: Content (loading / empty / loaded / error)
 

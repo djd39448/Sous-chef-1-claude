@@ -617,3 +617,83 @@ Fix (this commit) covers both halves of the broken save flow — B-01
 
 Verified: `go build ./...` and `xcodebuild iphonesimulator` both
 clean, zero warnings.
+
+---
+
+## 2026-05-23 · Bug-audit sweep #2: timezone, markdown, dead-button cull
+
+Second pass over `BUGS.md` — knocks out 15 more findings.
+
+- **B-03 calendar header was one month off.** `displayedMonth` was built
+  with `DateUtil.utc` but `monthTitle` formatted with no time zone, so
+  EDT pushed "May 1 UTC" back to "April 30 local" and the header read
+  "April" while the grid was clearly May. One-line fix: pin the
+  `DateFormatter`'s `timeZone` to UTC.
+
+- **B-04 composer reliability.** Chat composer now uses
+  `TextField(_, axis: .vertical)` with `lineLimit(1...4)`,
+  `submitLabel(.send)`, `textInputAutocapitalization(.sentences)`,
+  `onSubmit` wired to the send action. The composer container switched
+  from `frame(height: 56)` to `frame(minHeight: 56)` so the field can
+  grow as the user writes. Real-device testing is still the gating test
+  for this one.
+
+- **B-06 hero/badge collision on Recipe.** Dropped
+  `.ignoresSafeArea(edges: .top)` on the Recipe scroll content. The
+  hero no longer extends behind the Dynamic Island, so the title and
+  "AI GENERATED" pill never collide with the system clock.
+
+- **B-07 Markdown block syntax was rendering literally.** Replaced the
+  single `AttributedString(markdown:)` call with a line-by-line
+  renderer: `## Heading` lines become bold/large; `- bullet` lines get
+  a real `•` glyph; `1. step` lines keep a styled number prefix; all
+  other lines pass through `inlineMarkdown` so bold/italic/links still
+  work. Recipe bodies are now readable.
+
+- **B-08 Recipe floating pill.** Removed the dead "Ask about this
+  recipe…" pill. The text was a `Text` view (not a `TextField`) and the
+  send button was `Button { }` — pure decoration. Restores when
+  `/api/kitchen/recipe-message` is wired.
+
+- **B-09 / B-10 Home Swap button + Recipe Photo button.** Both pulled.
+  Swap had no flow yet; Photo's regenerate-image endpoint isn't wired
+  to a client. Better to ship fewer buttons than dead ones.
+
+- **B-11 Plan week-shift arrows.** Pulled. The backend doesn't yet
+  accept a `weekStart` query for `/api/kitchen/meal-plan` and the
+  arrows had no implementation. Plus the trailing sparkle (regenerate
+  plan) on the NavBar — chat is the canonical way to ask for a new
+  plan.
+
+- **B-12 Cookbook chrome cull.** Removed search icon, + icon, and the
+  static filter chips (All / Quick / Italian / etc.). No tagging on
+  `cookbook_recipes` exists; saving happens from the chat or the
+  Recipe bookmark. Returns when filters have a backend.
+
+- **B-13 Shopping chrome cull.** Removed filter and + icons. The chat's
+  `create_shopping_list` tool is how items appear today.
+
+- **B-14 Home day cards now tappable.** Each `dayCard(day)` is wrapped
+  in a `Button { openRecipe(.mealPlanDay(day)) }` — the data was
+  already there, the only missing piece was the gesture.
+
+- **B-15 Greeting fallback.** Dropped the email-prefix fallback that
+  produced "Afternoon, test2." — now reads "Good afternoon." when no
+  first name is set.
+
+- **B-16 Tonight meta dash.** The clock chip is skipped entirely when
+  `MealPlanDay.notes` is empty, so the meta row reads "Serves 4 · Easy"
+  instead of "— · Serves 4 · Easy".
+
+- **B-17 / B-18 Chat header.** Removed the back chevron (no nav stack
+  to go back through — Chat is a tab) and the gear (no settings
+  screen; sign-out is in the Home avatar Menu). Header is now a
+  centered "Sous Chef · Online".
+
+- **B-19 Calendar copy.** Detail card no longer promises "Tap a marked
+  day…" since the cells aren't tappable yet.
+
+- **B-20 Calendar trailing chevR.** Removed — duplicated nothing,
+  navigated nowhere. Month nav is the row below.
+
+Verified: `xcodebuild iphonesimulator` clean, zero warnings.

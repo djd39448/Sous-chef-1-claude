@@ -60,28 +60,28 @@ struct ChatScreen: View {
     // MARK: Header
 
     private var header: some View {
+        // Back chevron (B-17) and settings gear (B-18) removed in the
+        // dead-button cull: Chat lives in a tab — there's nowhere to go
+        // back to — and Settings doesn't exist yet (sign-out is in the
+        // Home avatar Menu). The status row stays centered.
         VStack(spacing: 0) {
-            HStack(alignment: .center) {
-                IconButton(icon: "chevL")
-                Spacer()
-                VStack(spacing: 1) {
-                    HStack(spacing: 6) {
-                        SCIcon("sparkle", size: 12, color: Theme.terraDeep, weight: .bold)
-                            .frame(width: 22, height: 22)
-                            .background(Theme.terraSoft)
-                            .clipShape(Circle())
-                        Text("Sous Chef")
-                            .font(Theme.sans(15, weight: .semibold))
-                            .foregroundStyle(Theme.ink)
-                    }
-                    Text(isStreaming ? "● Thinking…" : "● Online")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(isStreaming ? Theme.terra : Theme.sage)
+            VStack(spacing: 1) {
+                HStack(spacing: 6) {
+                    SCIcon("sparkle", size: 12, color: Theme.terraDeep, weight: .bold)
+                        .frame(width: 22, height: 22)
+                        .background(Theme.terraSoft)
+                        .clipShape(Circle())
+                    Text("Sous Chef")
+                        .font(Theme.sans(15, weight: .semibold))
+                        .foregroundStyle(Theme.ink)
                 }
-                Spacer()
-                IconButton(icon: "settings")
+                Text(isStreaming ? "● Thinking…" : "● Online")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(isStreaming ? Theme.terra : Theme.sage)
             }
+            .frame(maxWidth: .infinity)
             .padding(.horizontal, 12)
+            .padding(.top, 6)
             .padding(.bottom, 10)
             Hairline()
         }
@@ -238,12 +238,18 @@ struct ChatScreen: View {
         VStack(spacing: 0) {
             Hairline()
             HStack(spacing: 8) {
-                TextField("Message Sous Chef…", text: $draft)
+                TextField("Message Sous Chef…", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(Theme.sans(14))
                     .foregroundStyle(Theme.ink)
                     .padding(.leading, 16)
+                    .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineLimit(1...4)
+                    .submitLabel(.send)
+                    .textInputAutocapitalization(.sentences)
+                    .autocorrectionDisabled(false)
+                    .onSubmit { if canSend { Task { await send() } } }
                     .disabled(isStreaming)
                 Button { Task { await send() } } label: {
                     SCIcon("send", size: 16, color: .white)
@@ -255,7 +261,7 @@ struct ChatScreen: View {
                 .disabled(!canSend)
                 .padding(.trailing, 6)
             }
-            .frame(height: 56)
+            .frame(minHeight: 56)
             .background(Theme.card)
             .clipShape(RoundedRectangle(cornerRadius: 28))
             .overlay(RoundedRectangle(cornerRadius: 28).strokeBorder(Theme.hairline2, lineWidth: 1))
