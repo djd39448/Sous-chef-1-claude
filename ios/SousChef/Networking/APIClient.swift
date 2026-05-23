@@ -62,6 +62,12 @@ struct APIClient {
         guard let http = resp as? HTTPURLResponse else {
             throw APIError.other("non-HTTP response")
         }
+        if http.statusCode == 401 {
+            // Token is invalid or expired — bounce the user back to SignIn
+            // rather than getting stuck on an error card with no escape.
+            auth.signOut()
+            throw APIError.missingAuth
+        }
         if !(200..<300).contains(http.statusCode) {
             throw APIError.badResponse(status: http.statusCode,
                                        body: String(data: data, encoding: .utf8) ?? "")

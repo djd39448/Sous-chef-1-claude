@@ -22,6 +22,42 @@ struct Profile: Codable, Identifiable {
     let updatedAt: Date
 }
 
+/// Meal-plan summary (no days). Returned by `/api/kitchen/calendar`.
+struct MealPlan: Codable, Identifiable {
+    let id: Int
+    let userId: String
+    let weekStartDate: String   // YYYY-MM-DD
+    let createdAt: Date
+    let updatedAt: Date
+}
+
+/// Shopping-list summary (no items). Returned by `/api/kitchen/calendar`.
+struct ShoppingList: Codable, Identifiable {
+    let id: Int
+    let userId: String
+    let name: String
+    let weekStartDate: String?
+    let mealPlanId: Int?
+    let createdAt: Date
+}
+
+/// `GET /api/kitchen/calendar` — every plan and list, no children.
+struct CalendarResponse: Codable {
+    let mealPlans: [MealPlan]
+    let shoppingLists: [ShoppingList]
+}
+
+/// `GET /api/kitchen/ingredients` — soft-inventory ingredient memory row.
+struct Ingredient: Codable, Identifiable {
+    let id: Int
+    let userId: String
+    let name: String
+    let quantity: String?
+    let confidence: Double
+    let lastMentioned: Date
+    let createdAt: Date
+}
+
 /// One day inside a meal plan. `dayOfWeek` is 0=Sunday … 6=Saturday.
 struct MealPlanDay: Codable, Identifiable {
     let id: Int

@@ -16,7 +16,7 @@ struct HomeScreen: View {
 
     private enum LoadState {
         case loading
-        case loaded(profile: Profile, plan: MealPlanWithDays?)
+        case loaded(profile: Profile, plan: MealPlanWithDays?, ingredients: [Ingredient])
         case failed(String)
     }
 
@@ -44,9 +44,12 @@ struct HomeScreen: View {
         do {
             async let profileTask: Profile = client.get("/api/auth/user")
             async let planTask: MealPlanWithDays? = client.get("/api/kitchen/meal-plan")
+            async let ingredientsTask: [Ingredient] = client.get("/api/kitchen/ingredients")
             let profile = try await profileTask
             let plan = try await planTask
-            loadState = .loaded(profile: profile, plan: plan)
+            // Ingredients are best-effort: an empty pantry shouldn't break the screen.
+            let ingredients = (try? await ingredientsTask) ?? []
+            loadState = .loaded(profile: profile, plan: plan, ingredients: ingredients)
         } catch {
             loadState = .failed(error.localizedDescription)
         }
@@ -55,11 +58,15 @@ struct HomeScreen: View {
     // MARK: Derived
 
     private var profile: Profile? {
-        if case .loaded(let p, _) = loadState { return p } else { return nil }
+        if case .loaded(let p, _, _) = loadState { return p } else { return nil }
     }
 
     private var plan: MealPlanWithDays? {
-        if case .loaded(_, let p) = loadState { return p } else { return nil }
+        if case .loaded(_, let p, _) = loadState { return p } else { return nil }
+    }
+
+    private var ingredients: [Ingredient] {
+        if case .loaded(_, _, let i) = loadState { return i } else { return [] }
     }
 
     private var todayDayOfWeek: Int {
@@ -96,6 +103,27 @@ struct HomeScreen: View {
         return fmt.string(from: Date()).uppercased()
     }
 
+    private var avatarMenu: some View {
+        Menu {
+            Button(role: .destructive) {
+                auth.signOut()
+            } label: {
+                Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+            }
+        } label: {
+            avatarCircle
+        }
+    }
+
+    private var avatarCircle: some View {
+        Text(avatarInitial.isEmpty ? "·" : avatarInitial)
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(Theme.terraDeep)
+            .frame(width: 40, height: 40)
+            .background(Theme.terraSoft)
+            .clipShape(Circle())
+    }
+
     private var avatarInitial: String {
         let source = profile?.firstName ?? profile?.email ?? ""
         return source.prefix(1).uppercased()
@@ -118,12 +146,7 @@ struct HomeScreen: View {
                     .redacted(reason: profile == nil ? .placeholder : [])
             }
             Spacer()
-            Text(avatarInitial.isEmpty ? "·" : avatarInitial)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Theme.terraDeep)
-                .frame(width: 40, height: 40)
-                .background(Theme.terraSoft)
-                .clipShape(Circle())
+            avatarMenu
         }
         .padding(.top, 8)
         .padding(.horizontal, 20)
@@ -139,9 +162,9 @@ struct HomeScreen: View {
             tonightSkeleton
         case .failed(let message):
             errorCard(message: message)
-        case .loaded(_, .none):
+        case .loaded(_, .none, _):
             tonightEmpty
-        case .loaded(_, .some):
+        case .loaded(_, .some, _):
             if let meal = todayMeal {
                 tonightLoaded(meal: meal)
             } else {
@@ -418,23 +441,30 @@ struct HomeScreen: View {
                     .font(Theme.display(20, weight: .medium))
                     .foregroundStyle(Theme.ink)
                 Spacer()
-                Text("14 items")
+                Text(ingredients.isEmpty ? "Nothing yet" : "\(ingredients.count) items")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.ink3)
             }
             .padding(.bottom, 8)
 
-            FlowLayout(spacing: 8) {
-                ForEach(Samples.pantry) { item in
-                    HStack(spacing: 7) {
-                        CatDot(category: item.category)
-                        Text(item.name)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(Theme.ink)
+            if ingredients.isEmpty {
+                Text("Tell Sous Chef what you have on hand in the chat — it'll remember.")
+                    .font(Theme.sans(13))
+                    .foregroundStyle(Theme.ink3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                FlowLayout(spacing: 8) {
+                    ForEach(ingredients) { item in
+                        HStack(spacing: 7) {
+                            CatDot(category: "other")
+                            Text(item.name)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(Theme.ink)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .cardSurface(14)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .cardSurface(14)
                 }
             }
         }

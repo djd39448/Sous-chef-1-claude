@@ -77,6 +77,13 @@ enum DateUtil {
         return f.string(from: monday)
     }
 
+    /// Parse a `YYYY-MM-DD` date as UTC midnight. Public for callers that
+    /// need to do their own arithmetic (e.g. the calendar grid).
+    static func dateFromISO(_ s: String) -> Date? { parseUTCDate(s) }
+
+    /// The UTC Gregorian calendar — match the backend's day math.
+    static var utc: Calendar { utcCalendar }
+
     // MARK: Internal
 
     private static var utcCalendar: Calendar = {

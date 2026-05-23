@@ -391,3 +391,45 @@ Verified: `xcodebuild iphonesimulator` clean, no warnings.
 Still on mock content: Calendar (placeholder days), Recipe detail
 (the SSE generate flow), Chat (SSE messages), and HomeScreen's pantry
 + chat-shortcut sections.
+
+---
+
+## 2026-05-23 · Calendar + Home pantry + auto-signout + sign-out menu ✅
+
+Wrapping up the non-SSE wire-up. Six of eight screens now talk to the
+backend; only Recipe and Chat (both SSE-bearing) are still on mock.
+
+- **APIClient** now signs the user out on `401`. A stale Keychain
+  session that the backend rejects no longer presents as a dead-end
+  error card; the user is bounced to SignIn.
+
+- **HomeScreen — pantry wired.** `GET /api/kitchen/ingredients` is
+  fetched concurrently with profile + plan; an empty pantry renders
+  the "tell Sous Chef what you have" hint. The pantry chips also
+  show the live item count instead of the hardcoded "14 items".
+
+- **HomeScreen — sign-out menu.** Tapping the avatar opens a SwiftUI
+  `Menu` with a destructive "Sign out" action that clears Keychain +
+  flips `AuthModel`. (Apple/Google buttons stay non-functional placeholders
+  for now — they'll point at the real SIWA flow once that lands.)
+
+- **CalendarScreen — wired.** Fetches `GET /api/kitchen/calendar`
+  (`{ mealPlans, shoppingLists }`). The month grid is computed
+  dynamically from the displayed month (was hardcoded May 2026);
+  chevL / chevR step through months, "Today" jumps back. A day is
+  marked when it falls within any plan's or list's Mon-Sun week —
+  terra dot for plans, sage for lists, switched by the segmented
+  control. Today is highlighted in terra.
+
+- New helper additions to **DateUtil**: `dateFromISO` and a public `utc`
+  Calendar accessor for callers that need their own arithmetic on
+  the same UTC frame as the backend.
+
+- New DTOs: `MealPlan`, `ShoppingList` (the no-children summaries from
+  `/calendar`), `CalendarResponse`, `Ingredient`.
+
+Verified: `xcodebuild iphonesimulator` clean, no warnings.
+
+Still on mock: **Recipe** detail (needs streaming `generate-recipe`
+parsing — a real SSE reader in Swift) and **Chat** (streaming
+`/message` plus tool-result refetching). Tracked as task #10.
