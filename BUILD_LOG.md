@@ -179,3 +179,33 @@ Still pending — the *verification* part of the task:
 - **OpenAI call** — not yet exercised. (Also: the OpenAI key was
   transcribed from a screenshot and likely has a similar `I`/`l` error;
   Dave to verify.)
+
+---
+
+## 2026-05-22 · Backend end-to-end: pooler + OpenAI key verified ✅
+
+Two follow-ups to the first-connection entry above, in the same session:
+
+- **Switched `DATABASE_URL` to the Session pooler.** Dave provided the
+  full pooler URI from the Supabase dashboard's Connect dialog:
+  `aws-1-us-east-1.pooler.supabase.com:5432`. That's the IPv4-proxied
+  Supavisor endpoint Supabase recommends for app code (the direct
+  `db.<ref>.supabase.co` host is IPv6-only on the free tier). The backend
+  boots and serves `/healthz` cleanly through the pooler.
+
+- **OpenAI key verified.** The first key transcribed from Dave's Note
+  was rejected by OpenAI as `invalid_api_key` — the key was three months
+  old and either revoked or tied to a deleted project (SHA256 of the
+  bytes in `.env` matched what Dave pasted exactly; the key itself just
+  wasn't recognized upstream). Dave generated a fresh `sk-proj-…` key;
+  `GET https://api.openai.com/v1/models` with it returns `200` and 120
+  models, so the key is good and billing is in place.
+
+Still pending for true end-to-end:
+- **JWKS auth update** (task #8). Authed endpoints can't validate real
+  Supabase Auth tokens until the middleware swaps from HS256/shared-secret
+  to JWKS lookup. Until then, every signed-in request returns 401.
+- **An actual model call through our backend** — once auth works, hitting
+  `/api/kitchen/regenerate-image` or `/api/kitchen/message` will exercise
+  the OpenAI client all the way through. That's the last gate on
+  "end-to-end verified".
