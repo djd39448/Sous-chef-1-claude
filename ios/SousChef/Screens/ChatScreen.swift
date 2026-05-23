@@ -29,6 +29,8 @@ struct ChatScreen: View {
         VStack(spacing: 0) {
             header
             messagesList
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             composer
         }
         .background(Theme.bg)
@@ -234,14 +236,12 @@ struct ChatScreen: View {
         VStack(spacing: 0) {
             Hairline()
             HStack(spacing: 8) {
-                TextField("", text: $draft,
-                          prompt: Text("Message Sous Chef…").foregroundColor(Theme.ink3),
-                          axis: .vertical)
-                    .lineLimit(1...4)
+                TextField("Message Sous Chef…", text: $draft)
+                    .textFieldStyle(.plain)
                     .font(Theme.sans(14))
                     .foregroundStyle(Theme.ink)
                     .padding(.leading, 16)
-                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .disabled(isStreaming)
                 Button { Task { await send() } } label: {
                     SCIcon("send", size: 16, color: .white)
@@ -253,13 +253,13 @@ struct ChatScreen: View {
                 .disabled(!canSend)
                 .padding(.trailing, 6)
             }
-            .frame(minHeight: 44)
+            .frame(height: 56)
             .background(Theme.card)
-            .clipShape(RoundedRectangle(cornerRadius: 22))
-            .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(Theme.hairline2, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 28))
+            .overlay(RoundedRectangle(cornerRadius: 28).strokeBorder(Theme.hairline2, lineWidth: 1))
             .padding(.horizontal, 12)
             .padding(.top, 10)
-            .padding(.bottom, 8)
+            .padding(.bottom, 10)
         }
         .background(Theme.bg)
     }

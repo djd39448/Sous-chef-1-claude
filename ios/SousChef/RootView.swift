@@ -86,7 +86,7 @@ struct MainView: View {
         case .shop:
             NavigationStack { ShoppingScreen() }
         case .chat:
-            NavigationStack { ChatScreen() }
+            ChatScreen()   // no nav stack — composer pins via safeAreaInset
         }
     }
 }
