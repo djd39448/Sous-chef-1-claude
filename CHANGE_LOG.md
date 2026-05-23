@@ -13,6 +13,32 @@ process. Implementation-level bug fixes belong in commit messages, not here.
 
 ---
 
+## 2026-05-23 — Sign in with Apple deferred; email auth is the dev path
+
+**Changed:** Decision D1 set Sign in with Apple as the primary sign-in
+path. For now, the design's three sign-in buttons (Apple, Google, email)
+all present an email + password sheet that talks to Supabase Auth via
+REST. The SIWA wiring is queued.
+**Why:** Sign in with Apple requires (a) an Apple Developer Program
+enrollment ($99/yr; ~24-48hr provisioning) and (b) the Supabase Apple
+provider configured with a service id, team id, key id, and a `.p8`
+key. Neither is in place yet, and we'd rather have the rest of the app
+working end-to-end first. When SIWA lands the `EmailSignInSheet`
+remains as the fallback.
+
+## 2026-05-23 — Manual Info.plist for ATS local-networking exception
+
+**Changed:** the iOS app now ships a manual `ios/Info.plist`
+(`INFOPLIST_FILE = Info.plist`) instead of relying on
+`GENERATE_INFOPLIST_FILE`.
+**Why:** the iOS Simulator needs an `NSAppTransportSecurity →
+NSAllowsLocalNetworking` exception to make plain-HTTP requests to
+`http://localhost:8080` during dev. ATS sub-keys aren't settable via
+the `INFOPLIST_KEY_*` build settings, so a manual Info.plist is the
+straightforward fix. The file lives at `ios/Info.plist` — outside the
+file-system-synchronized `SousChef/` folder so Xcode doesn't also try
+to copy it as a bundle resource.
+
 ## 2026-05-22 — Supabase project uses asymmetric JWT signing keys
 
 **Changed:** the Sous Chef Supabase project was provisioned with Supabase's

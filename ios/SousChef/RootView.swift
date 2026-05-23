@@ -36,16 +36,17 @@ enum Tab: String, CaseIterable, Identifiable {
 
 /// Root: the sign-in gate, then the main tabbed app.
 struct RootView: View {
-    @State private var signedIn = false
+    @Environment(AuthModel.self) private var auth
 
     var body: some View {
         Group {
-            if signedIn {
+            if auth.isSignedIn {
                 MainView()
             } else {
-                SignInScreen { withAnimation(.easeInOut(duration: 0.35)) { signedIn = true } }
+                SignInScreen()
             }
         }
+        .animation(.easeInOut(duration: 0.35), value: auth.isSignedIn)
     }
 }
 

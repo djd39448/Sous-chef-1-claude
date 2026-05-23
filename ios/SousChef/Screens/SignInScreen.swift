@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The pre-auth screen: hero photo, brand, and the sign-in options.
 struct SignInScreen: View {
-    var onSignIn: () -> Void = {}
+    @State private var showSignInSheet = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,6 +22,9 @@ struct SignInScreen: View {
         }
         .background(Theme.bg)
         .ignoresSafeArea(edges: .top)
+        .sheet(isPresented: $showSignInSheet) {
+            EmailSignInSheet()
+        }
     }
 
     private var heroGradient: some View {
@@ -70,7 +73,7 @@ struct SignInScreen: View {
 
     private var buttons: some View {
         VStack(spacing: 10) {
-            Button(action: onSignIn) {
+            Button { showSignInSheet = true } label: {
                 HStack(spacing: 8) {
                     SCIcon("apple", size: 20, color: .white)
                     Text("Sign in with Apple").font(Theme.sans(16, weight: .semibold))
@@ -83,7 +86,7 @@ struct SignInScreen: View {
             }
             .buttonStyle(.plain)
 
-            Button(action: onSignIn) {
+            Button { showSignInSheet = true } label: {
                 HStack(spacing: 10) {
                     GoogleGLogo(size: 18)
                     Text("Continue with Google").font(Theme.sans(16, weight: .semibold))
@@ -100,7 +103,7 @@ struct SignInScreen: View {
             }
             .buttonStyle(.plain)
 
-            Button(action: onSignIn) {
+            Button { showSignInSheet = true } label: {
                 Text("Continue with email")
                     .font(Theme.sans(14, weight: .medium))
                     .foregroundStyle(Theme.ink2)

@@ -249,3 +249,58 @@ Verified:
 What's left for genuine integrated e2e: a request signed by a real
 Supabase Auth user, which is exercised naturally once the iOS app is
 wired to the backend.
+
+---
+
+## 2026-05-23 · iOS wire-up: networking + auth foundation ✅
+
+Built the iOS-side foundation so the SwiftUI app can talk to the Go
+backend. No screen *data* is wired yet — that's the next pass.
+
+- `SousChef/Networking/` (new package):
+  - `AppConfig.swift` — backend base URL (`http://localhost:8080` for the
+    simulator), Supabase project URL, publishable key.
+  - `APIError.swift` — typed errors used across the network layer.
+  - `TokenStore.swift` — Keychain wrapper for the active `AuthSession`.
+  - `SupabaseAuthClient.swift` — thin REST client for Supabase Auth
+    (`/auth/v1/signup`, `/auth/v1/token`). Avoids pulling in the full
+    `supabase-swift` SDK as a Swift Package dependency for a surface we
+    only need three calls from.
+  - `APIClient.swift` — `URLSession` base, bearer-token header from the
+    `AuthModel`, JSON decoding with a date strategy that accepts both
+    fractional-second and plain ISO-8601 (Go's `time.Time` emits the
+    former).
+  - `AuthModel.swift` — `@Observable` model exposing `session`,
+    `isSignedIn`, `signIn`, `signUp`, `signOut`. Resumes from Keychain
+    on launch.
+
+- `SousChef/Screens/EmailSignInSheet.swift` — modal email + password
+  sheet with a sign-in / sign-up toggle. Loading and error state
+  surfaced in-place. This covers the design's "Continue with email"
+  flow; the Apple / Google buttons currently also present this sheet
+  (see `CHANGE_LOG` — Sign in with Apple deferred).
+
+- `RootView.swift` reads from `AuthModel.isSignedIn` instead of local
+  state; `SousChefApp.swift` constructs the `AuthModel` and injects it
+  via `.environment(_:)`.
+
+- Build config: moved off the auto-generated Info.plist to a manual
+  `ios/Info.plist` so the ATS local-networking exception can be set
+  (see `CHANGE_LOG`). The file lives at `ios/Info.plist` — outside the
+  file-system-synchronized `SousChef/` folder so Xcode doesn't try to
+  copy it as a resource as well.
+
+Verified:
+- `xcodebuild` for `iphonesimulator` builds clean, no warnings.
+- Booted in the iPhone 17 Pro simulator. Sign In screen still matches
+  the design verbatim (screenshot taken). Tapping any of the three
+  buttons would now present the email sheet.
+
+To actually sign in once Dave attempts it, his Supabase project needs
+**email confirmation disabled** (Dashboard → Authentication → Email
+Auth → toggle "Confirm email" off) — or a pre-confirmed user must
+exist. Otherwise signup throws "Account created — please check your
+email to confirm".
+
+Next iteration: wire individual screens to real API calls — start with
+Home pulling `/api/auth/user` and the most-recent meal plan.
