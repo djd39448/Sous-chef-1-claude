@@ -56,6 +56,8 @@ struct APIClient {
         let (data, resp): (Data, URLResponse)
         do {
             (data, resp) = try await URLSession.shared.data(for: req)
+        } catch let e as URLError where e.code == .cancelled {
+            throw APIError.cancelled
         } catch let e as URLError {
             throw APIError.network(e)
         }
@@ -149,6 +151,8 @@ struct APIClient {
                     yieldEvent(from: &buffer, into: continuation)
                     continuation.finish()
                 } catch is CancellationError {
+                    continuation.finish()
+                } catch let e as URLError where e.code == .cancelled {
                     continuation.finish()
                 } catch let e as URLError {
                     continuation.finish(throwing: APIError.network(e))

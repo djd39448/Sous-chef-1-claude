@@ -68,6 +68,8 @@ struct ShoppingScreen: View {
                 list = nil
                 loadState = .empty
             }
+        } catch let e as APIError where e.isBenignCancellation {
+            return
         } catch {
             loadState = .failed(error.localizedDescription)
         }

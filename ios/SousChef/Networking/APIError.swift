@@ -12,6 +12,7 @@ enum APIError: LocalizedError {
     case badResponse(status: Int, body: String)
     case decoding(Error)
     case missingAuth
+    case cancelled        // a benign cooperative cancellation — view went away
     case other(String)
 
     var errorDescription: String? {
@@ -26,8 +27,20 @@ enum APIError: LocalizedError {
             return "Couldn't read the server response: \(e.localizedDescription)"
         case .missingAuth:
             return "You need to sign in to do that."
+        case .cancelled:
+            return "Request cancelled."
         case .other(let s):
             return s
+        }
+    }
+
+    /// True for errors that the UI should silently ignore — typically the
+    /// view that started the request has gone away.
+    var isBenignCancellation: Bool {
+        switch self {
+        case .cancelled: return true
+        case .network(let e): return e.code == .cancelled
+        default: return false
         }
     }
 }

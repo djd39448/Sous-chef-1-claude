@@ -47,6 +47,10 @@ struct CookbookScreen: View {
         do {
             let list: [CookbookRecipe] = try await client.get("/api/kitchen/cookbook")
             loadState = .loaded(list)
+        } catch let e as APIError where e.isBenignCancellation {
+            // The view went away mid-fetch — leave the existing state alone
+            // rather than flashing a scary error card.
+            return
         } catch {
             loadState = .failed(error.localizedDescription)
         }

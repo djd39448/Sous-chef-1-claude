@@ -47,6 +47,8 @@ struct PlanScreen: View {
         do {
             let plan: MealPlanWithDays? = try await client.get("/api/kitchen/meal-plan")
             loadState = .loaded(plan: plan)
+        } catch let e as APIError where e.isBenignCancellation {
+            return
         } catch {
             loadState = .failed(error.localizedDescription)
         }

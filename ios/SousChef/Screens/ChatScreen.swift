@@ -50,6 +50,8 @@ struct ChatScreen: View {
             let c: ConversationWithMessages = try await client.get("/api/kitchen/conversation")
             conversation = c
             loadState = .loaded
+        } catch let e as APIError where e.isBenignCancellation {
+            return
         } catch {
             loadState = .failed(error.localizedDescription)
         }
@@ -325,6 +327,8 @@ struct ChatScreen: View {
                     break
                 }
             }
+        } catch let e as APIError where e.isBenignCancellation {
+            // Stream torn down because the view went away — drop quietly.
         } catch {
             lastError = error.localizedDescription
         }

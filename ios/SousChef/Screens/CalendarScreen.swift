@@ -56,6 +56,8 @@ struct CalendarScreen: View {
         do {
             let resp: CalendarResponse = try await client.get("/api/kitchen/calendar")
             loadState = .loaded(resp)
+        } catch let e as APIError where e.isBenignCancellation {
+            return
         } catch {
             loadState = .failed(error.localizedDescription)
         }

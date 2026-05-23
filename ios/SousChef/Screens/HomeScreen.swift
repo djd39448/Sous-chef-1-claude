@@ -50,6 +50,10 @@ struct HomeScreen: View {
             // Ingredients are best-effort: an empty pantry shouldn't break the screen.
             let ingredients = (try? await ingredientsTask) ?? []
             loadState = .loaded(profile: profile, plan: plan, ingredients: ingredients)
+        } catch let e as APIError where e.isBenignCancellation {
+            // The view went away mid-fetch — leave the existing state alone
+            // rather than flashing a scary error card.
+            return
         } catch {
             loadState = .failed(error.localizedDescription)
         }
