@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"souschef/internal/auth"
 	"souschef/internal/openai"
 	"souschef/internal/store"
 )
@@ -22,12 +21,12 @@ type Server struct {
 }
 
 // NewServer builds the HTTP handler: the routed mux wrapped in CORS and the
-// Supabase JWT auth middleware.
-func NewServer(st *store.Store, ai *openai.Client, jwtSecret string) http.Handler {
+// provided auth middleware (typically Supabase JWKS verification).
+func NewServer(st *store.Store, ai *openai.Client, authMW func(http.Handler) http.Handler) http.Handler {
 	s := &Server{store: st, ai: ai}
 	mux := http.NewServeMux()
 	s.routes(mux)
-	return cors(auth.Middleware(jwtSecret)(mux))
+	return cors(authMW(mux))
 }
 
 func (s *Server) routes(mux *http.ServeMux) {

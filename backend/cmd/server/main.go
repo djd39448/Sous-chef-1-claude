@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"souschef/internal/api"
+	"souschef/internal/auth"
 	"souschef/internal/config"
 	"souschef/internal/openai"
 	"souschef/internal/store"
@@ -31,7 +32,12 @@ func main() {
 	}
 	defer st.Close()
 
-	handler := api.NewServer(st, openai.New(cfg.OpenAIAPIKey), cfg.SupabaseJWTSecret)
+	authMW, err := auth.Middleware(cfg.JWKSURL())
+	if err != nil {
+		log.Fatalf("auth: %v", err)
+	}
+
+	handler := api.NewServer(st, openai.New(cfg.OpenAIAPIKey), authMW)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

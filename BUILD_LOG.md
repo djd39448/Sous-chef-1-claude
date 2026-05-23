@@ -209,3 +209,43 @@ Still pending for true end-to-end:
   `/api/kitchen/regenerate-image` or `/api/kitchen/message` will exercise
   the OpenAI client all the way through. That's the last gate on
   "end-to-end verified".
+
+---
+
+## 2026-05-23 · Backend auth: JWKS verification ✅
+
+`backend/internal/auth/auth.go` was rewritten to verify Supabase Auth
+access tokens against the project's JWKS endpoint
+(`https://hssqzhwtwpvblfdmqzpw.supabase.co/auth/v1/.well-known/jwks.json`)
+instead of HS256 against a shared secret. This closes the open item from
+the asymmetric-JWT-keys pivot in `CHANGE_LOG.md`.
+
+- Added one direct dependency: `github.com/MicahParks/keyfunc/v3` — it
+  fetches, caches, and refreshes the JWKS in the background, with on-demand
+  refresh when a token's `kid` isn't in the current set.
+- `auth.Middleware(jwksURL)` now returns `(middleware, error)`: an
+  unreachable or malformed JWKS at startup is a fatal error, surfaced
+  through `cmd/server/main.go`. Accepted algorithms are restricted to
+  `ES256` and `RS256` (the algorithms Supabase uses).
+- Config changed: `SUPABASE_JWT_SECRET` was dropped. The backend now reads
+  `SUPABASE_PROJECT_URL` and derives the JWKS URL internally via
+  `Config.JWKSURL()`. `backend/.env.example` and the local `backend/.env`
+  were updated to match.
+- `api.NewServer` now takes a pre-built middleware function instead of a
+  secret string, decoupling the api package from the auth specifics.
+
+Verified:
+- `go build ./...`, `go vet ./...`, and `go test ./...` all clean (the
+  week-start unit test still passes).
+- Server boots cleanly; the synchronous JWKS fetch against the real
+  Supabase project succeeds.
+- `/healthz` → `200 ok` (auth bypasses /healthz).
+- `/api/auth/user` without a token → `401`.
+- `/api/auth/user` with a well-formed JWT whose `kid` doesn't match any
+  JWKS key → `401`. This is the meaningful proof that the full JWKS
+  signature-verification path is running — not just the bearer-prefix
+  gate.
+
+What's left for genuine integrated e2e: a request signed by a real
+Supabase Auth user, which is exercised naturally once the iOS app is
+wired to the backend.

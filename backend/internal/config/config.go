@@ -10,28 +10,28 @@ import (
 
 // Config holds the runtime configuration for the backend.
 type Config struct {
-	Port              string // HTTP listen port
-	DatabaseURL       string // Supabase PostgreSQL connection string
-	SupabaseJWTSecret string // HS256 secret used to verify Supabase Auth tokens
-	OpenAIAPIKey      string // OpenAI API key
+	Port               string // HTTP listen port
+	DatabaseURL        string // Supabase PostgreSQL connection string
+	SupabaseProjectURL string // e.g. https://<ref>.supabase.co — used to derive the JWKS URL
+	OpenAIAPIKey       string // OpenAI API key
 }
 
 // Load reads configuration from environment variables and verifies that the
 // required values are present.
 func Load() (Config, error) {
 	c := Config{
-		Port:              getenv("PORT", "8080"),
-		DatabaseURL:       os.Getenv("DATABASE_URL"),
-		SupabaseJWTSecret: os.Getenv("SUPABASE_JWT_SECRET"),
-		OpenAIAPIKey:      os.Getenv("OPENAI_API_KEY"),
+		Port:               getenv("PORT", "8080"),
+		DatabaseURL:        os.Getenv("DATABASE_URL"),
+		SupabaseProjectURL: strings.TrimRight(os.Getenv("SUPABASE_PROJECT_URL"), "/"),
+		OpenAIAPIKey:       os.Getenv("OPENAI_API_KEY"),
 	}
 
 	var missing []string
 	if c.DatabaseURL == "" {
 		missing = append(missing, "DATABASE_URL")
 	}
-	if c.SupabaseJWTSecret == "" {
-		missing = append(missing, "SUPABASE_JWT_SECRET")
+	if c.SupabaseProjectURL == "" {
+		missing = append(missing, "SUPABASE_PROJECT_URL")
 	}
 	if c.OpenAIAPIKey == "" {
 		missing = append(missing, "OPENAI_API_KEY")
@@ -40,6 +40,11 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
 	}
 	return c, nil
+}
+
+// JWKSURL returns the project's Supabase Auth JWKS endpoint.
+func (c Config) JWKSURL() string {
+	return c.SupabaseProjectURL + "/auth/v1/.well-known/jwks.json"
 }
 
 // LoadDotEnv reads KEY=VALUE lines from the file at path into the process
