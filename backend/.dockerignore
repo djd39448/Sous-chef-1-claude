@@ -1,0 +1,21 @@
+# Keep secrets and local cruft out of the build context.
+.env
+.env.*
+!.env.example
+
+# Build outputs
+bin/
+tmp/
+
+# macOS / editor cruft
+.DS_Store
+*.swp
+.idea/
+
+# Tests we don't run inside the image
+*.test
+*.out
+
+# The Dockerfile itself doesn't need to ship inside the image.
+Dockerfile
+.dockerignore

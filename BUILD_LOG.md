@@ -490,3 +490,26 @@ Polish still pending (not on the AWS critical path):
 - `/api/kitchen/recipe-message` wire — the floating "Ask about this
   recipe…" pill currently does nothing.
 - `/api/kitchen/regenerate-image` to swap in the AI photo when ready.
+
+---
+
+## 2026-05-23 · AWS deploy — Dockerfile + plan ✅ (groundwork)
+
+The artifacts that don't need an AWS account to land.
+
+- **`backend/Dockerfile`** — multi-stage, distroless, arm64,
+  `CGO_ENABLED=0`, runs as the `nonroot` user. Final image ~15 MB.
+  Targets AWS Graviton on Fargate (per `sc-06`).
+- **`backend/.dockerignore`** — keeps `.env`, build outputs, and
+  editor cruft out of the build context.
+- **`docs/AWS_DEPLOY.md`** — the architecture (ECS/Fargate + ALB +
+  ECR + Secrets Manager + CloudWatch), the prerequisites Dave needs
+  to install (AWS account, IAM admin user, AWS CLI, Docker Desktop,
+  optional domain), the step-by-step (`docker build` → ECR push →
+  Secrets Manager → `terraform apply`), the cost outlook (~$30–50/mo),
+  and a clear table of what is code vs what Dave does by hand.
+
+Tooling check on the dev machine right now: `docker`, `aws`, and
+`terraform` are all not installed — they're on Dave's prereq list.
+Terraform manifests under `infra/aws/` come in the next commit, after
+Dave is signed in to AWS and we know the account ID + region.
