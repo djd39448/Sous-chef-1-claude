@@ -134,23 +134,19 @@ struct APIClient {
 
                     // Read line by line. SSE separates events with a blank
                     // line; within an event, `data:` lines accumulate.
+                    // Non-`data:` lines (comments, heartbeats) are skipped;
+                    // empty `data:` lines (no payload) yield no event.
                     var buffer: [String] = []
                     for try await line in bytes.lines {
                         if line.isEmpty {
-                            if !buffer.isEmpty {
-                                continuation.yield(SSEEvent(data: buffer.joined(separator: "\n")))
-                                buffer.removeAll(keepingCapacity: true)
-                            }
+                            yieldEvent(from: &buffer, into: continuation)
                             continue
                         }
                         if let payload = parseDataLine(line) {
                             buffer.append(payload)
                         }
                     }
-                    // Flush any trailing event without a closing blank line.
-                    if !buffer.isEmpty {
-                        continuation.yield(SSEEvent(data: buffer.joined(separator: "\n")))
-                    }
+                    yieldEvent(from: &buffer, into: continuation)
                     continuation.finish()
                 } catch is CancellationError {
                     continuation.finish()
@@ -167,26 +163,48 @@ struct APIClient {
         guard line.hasPrefix("data:") else { return nil }
         let payload = line.dropFirst("data:".count)
         let trimmed = payload.hasPrefix(" ") ? String(payload.dropFirst()) : String(payload)
-        return trimmed
+        return trimmed.isEmpty ? nil : trimmed
     }
 
-    /// Shared JSON decoder. Accepts ISO-8601 timestamps both with and without
-    /// fractional seconds (Go's `time.Time` emits fractional; the iOS
-    /// `.iso8601` strategy alone would reject those).
+    private func yieldEvent(from buffer: inout [String],
+                            into continuation: AsyncThrowingStream<SSEEvent, Error>.Continuation) {
+        guard !buffer.isEmpty else { return }
+        let payload = buffer.joined(separator: "\n")
+        buffer.removeAll(keepingCapacity: true)
+        guard !payload.isEmpty else { return }
+        continuation.yield(SSEEvent(data: payload))
+    }
+
+    /// Shared JSON decoder. Accepts ISO-8601 timestamps with up to 9
+    /// fractional-second digits — Go's `time.Time` emits RFC3339Nano
+    /// (`…20.977852-04:00`), and iOS's `ISO8601DateFormatter` only handles
+    /// up to 3, so anything beyond is truncated before parsing.
     static let decoder: JSONDecoder = {
         let d = JSONDecoder()
         d.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
-            let s = try container.decode(String.self)
+            let raw = try container.decode(String.self)
+            let s = raw.replacingOccurrences(
+                of: #"(\.\d{3})\d+"#,
+                with: "$1",
+                options: .regularExpression
+            )
             let withFrac = ISO8601DateFormatter()
             withFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
             if let date = withFrac.date(from: s) { return date }
             let plain = ISO8601DateFormatter()
             plain.formatOptions = [.withInternetDateTime]
-            if let date = plain.date(from: s) { return date }
+            // ISO8601DateFormatter without fractional seconds doesn't like
+            // a fractional component being present either, so strip it.
+            let noFrac = s.replacingOccurrences(
+                of: #"\.\d+"#,
+                with: "",
+                options: .regularExpression
+            )
+            if let date = plain.date(from: noFrac) { return date }
             throw DecodingError.dataCorruptedError(
                 in: container,
-                debugDescription: "Unrecognized date format: \(s)")
+                debugDescription: "Unrecognized date format: \(raw)")
         }
         return d
     }()

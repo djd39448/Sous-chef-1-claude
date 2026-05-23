@@ -98,7 +98,11 @@ struct RecipeScreen: View {
                 path: "/api/kitchen/generate-recipe/\(dayId)",
                 body: [String: String]()
             ) {
-                let chunk = try decoder.decode(RecipeChunk.self, from: Data(event.data.utf8))
+                // Tolerate occasional non-JSON events (heartbeats, partial
+                // frames) — skip them rather than abort the stream.
+                guard let chunk = try? decoder.decode(
+                    RecipeChunk.self, from: Data(event.data.utf8)
+                ) else { continue }
                 if let delta = chunk.content {
                     content += delta
                 } else if let prompt = chunk.imagePrompt, chunk.done == true {

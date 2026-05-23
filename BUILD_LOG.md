@@ -513,3 +513,37 @@ Tooling check on the dev machine right now: `docker`, `aws`, and
 `terraform` are all not installed — they're on Dave's prereq list.
 Terraform manifests under `infra/aws/` come in the next commit, after
 Dave is signed in to AWS and we know the account ID + region.
+
+---
+
+## 2026-05-23 · Fix: every screen was choking on Go's nanosecond timestamps
+
+Dave caught this in actual app testing — Recipe + Chat (and silently
+every other screen) showing "The data couldn't be read because it
+isn't in the correct format." Two bugs unwound:
+
+1. **Date decoder.** Go's `time.Time.MarshalJSON` emits RFC3339Nano
+   with up to 9 fractional-second digits (`…20.977852-04:00`). iOS's
+   `ISO8601DateFormatter` with `.withFractionalSeconds` only handles
+   up to 3 — anything longer was rejected. The custom date strategy in
+   `APIClient.decoder` now truncates the fractional part to 3 digits
+   via a regex before parsing, and also strips it entirely as a
+   fallback for the plain (no-fraction) formatter. Verified against
+   six sample formats including the 9-digit max.
+
+   This was the cause of "nothing really works" — every DTO (`Profile`,
+   `MealPlanWithDays`, `CookbookRecipe`, `ConversationWithMessages`,
+   `ShoppingListWithItems`, `MealPlan`, `ShoppingList`, …) has a
+   `createdAt`/`updatedAt` and was failing the same way.
+
+2. **SSE reader hardening.** `parseDataLine` now returns nil for
+   empty payloads (`data:` with no content), and `yieldEvent` filters
+   out empty buffered events at flush points. ChatScreen and
+   RecipeScreen also `try?`-decode each chunk and skip unrecognized
+   ones instead of aborting the whole stream — so a single weird
+   event (a heartbeat, a partial frame) no longer kills the rest of
+   the recipe generation.
+
+Verified: `xcodebuild iphonesimulator` clean, and a standalone Swift
+script confirmed all six common timestamp formats parse correctly
+(including Go's max-precision 9-digit nanos).

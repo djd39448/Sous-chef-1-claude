@@ -312,7 +312,11 @@ struct ChatScreen: View {
         let decoder = JSONDecoder()
         do {
             for try await event in client.stream(path: "/api/kitchen/message", body: body) {
-                let chunk = try decoder.decode(StreamChunk.self, from: Data(event.data.utf8))
+                // Tolerate occasional non-JSON events (heartbeats, malformed
+                // single frames) — skip them rather than abort the stream.
+                guard let chunk = try? decoder.decode(
+                    StreamChunk.self, from: Data(event.data.utf8)
+                ) else { continue }
                 if let delta = chunk.content {
                     streamingContent += delta
                 } else if let err = chunk.error {
