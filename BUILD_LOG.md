@@ -433,3 +433,60 @@ Verified: `xcodebuild iphonesimulator` clean, no warnings.
 Still on mock: **Recipe** detail (needs streaming `generate-recipe`
 parsing — a real SSE reader in Swift) and **Chat** (streaming
 `/message` plus tool-result refetching). Tracked as task #10.
+
+---
+
+## 2026-05-23 · Chat + Recipe wired to SSE — all eight screens live ✅
+
+The two streaming flows. **Eight of eight screens** now talk to the
+backend; the iOS app is fully wired (modulo polish noted below).
+
+- **APIClient.stream(path:body:)** — a `URLSession.bytes(for:)`-based
+  SSE reader that yields each `data:` frame as an
+  `AsyncThrowingStream<SSEEvent, Error>`. Handles the multi-line /
+  blank-line-separated SSE spec, 401 → auto-signout, network errors →
+  propagate. `req.timeoutInterval` lifted to 300 s so long completions
+  don't break the connection.
+
+- **ChatScreen — fully rewired:**
+  - Loads the default conversation via `GET /api/kitchen/conversation`
+    (the backend creates one server-side if the user has none).
+  - Send → `POST /api/kitchen/message` and streams the assistant reply
+    with a live blinking-cursor bubble.
+  - On `{done: true}` refetches the conversation to pick up the
+    persisted assistant message and any tool-call side effects (a new
+    meal plan, a new shopping list, ingredient updates).
+  - Optimistic user-message bubble; auto-scroll on each delta.
+
+- **RecipeScreen rewrite + a new `RecipeSource` enum:**
+  - Now takes a `RecipeSource` — `.mealPlanDay(MealPlanDay)` or
+    `.cookbook(CookbookRecipe)`.
+  - For `.mealPlanDay`: if the day already has `recipeContent`, renders
+    it. Otherwise opens
+    `POST /api/kitchen/generate-recipe/{id}` and streams the Markdown
+    in live. The terminal `{imagePrompt, done: true}` event is
+    captured for future image generation.
+  - For `.cookbook`: renders the saved Markdown directly.
+  - Title bar + hero image come from `ImageLookup`; content rendered
+    via `AttributedString(markdown:)` (inline-only). A proper
+    structured Ingredients / Instructions parser per the design is a
+    follow-up.
+
+- **MainView:** `showRecipe: Bool` replaced with `recipeSource:
+  RecipeSource?`. The `fullScreenCover` binds via `item:`, so Home /
+  Plan / Cookbook each pass the right source.
+
+- DTOs added: `Conversation`, `Message`, `ConversationWithMessages`.
+- Removed dead mock structs from `SampleData.swift` (every model the
+  old mock data carried was either replaced by a DTO or unused).
+  `Food.*` URLs remain — they're the keyword-match fallback used by
+  `ImageLookup` until AI photos are wired.
+
+`xcodebuild iphonesimulator` clean, no warnings.
+
+Polish still pending (not on the AWS critical path):
+- Structured recipe rendering (Ingredients checkboxes + numbered
+  Instructions per the design).
+- `/api/kitchen/recipe-message` wire — the floating "Ask about this
+  recipe…" pill currently does nothing.
+- `/api/kitchen/regenerate-image` to swap in the AI photo when ready.

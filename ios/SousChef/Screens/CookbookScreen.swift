@@ -7,7 +7,7 @@ import SwiftUI
 /// are still mock (no tagging in the contract yet); when the user has no
 /// saved recipes the grid is replaced by an empty-state card.
 struct CookbookScreen: View {
-    var openRecipe: () -> Void = {}
+    var openRecipe: (RecipeSource) -> Void = { _ in }
 
     @Environment(AuthModel.self) private var auth
     @State private var loadState: LoadState = .loading
@@ -173,7 +173,7 @@ struct CookbookScreen: View {
                     .foregroundStyle(Theme.ink3)
                     .padding(.top, 4)
                 Spacer(minLength: 8)
-                Button(action: openRecipe) {
+                Button { openRecipe(.cookbook(recipe)) } label: {
                     Text("Cook again")
                         .font(Theme.sans(12, weight: .semibold))
                         .foregroundStyle(.white)
@@ -196,7 +196,7 @@ struct CookbookScreen: View {
     private func recipeGrid(_ recipes: [CookbookRecipe]) -> some View {
         LazyVGrid(columns: columns, spacing: 12) {
             ForEach(recipes) { recipe in
-                Button(action: openRecipe) { recipeCard(recipe) }
+                Button { openRecipe(.cookbook(recipe)) } label: { recipeCard(recipe) }
                     .buttonStyle(.plain)
             }
         }

@@ -11,6 +11,35 @@ import Foundation
 //                 the Swift restatement of it. Keep them additive — when
 //                 the contract grows, add types here.
 
+/// A kitchen chat conversation.
+struct Conversation: Codable, Identifiable {
+    let id: Int
+    let userId: String
+    let title: String
+    let createdAt: Date
+    let updatedAt: Date
+}
+
+/// One chat message inside a conversation. `metadata` is ignored on the
+/// client today (the contract leaves it as freeform JSONB).
+struct Message: Codable, Identifiable {
+    let id: Int
+    let conversationId: Int
+    let role: String         // "user" | "assistant"
+    let content: String
+    let createdAt: Date
+}
+
+/// `GET /api/kitchen/conversation[/:id]` — a conversation with its messages.
+struct ConversationWithMessages: Codable, Identifiable {
+    let id: Int
+    let userId: String
+    let title: String
+    let createdAt: Date
+    let updatedAt: Date
+    let messages: [Message]
+}
+
 /// `GET /api/auth/user`
 struct Profile: Codable, Identifiable {
     let id: String

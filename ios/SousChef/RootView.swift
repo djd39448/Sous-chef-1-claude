@@ -54,15 +54,15 @@ struct RootView: View {
 /// recipe detail presented full-screen over everything.
 struct MainView: View {
     @State private var tab: Tab = .home
-    @State private var showRecipe = false
+    @State private var recipeSource: RecipeSource?
 
     var body: some View {
         tabContent
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 CustomTabBar(active: tab) { tab = $0 }
             }
-            .fullScreenCover(isPresented: $showRecipe) {
-                RecipeScreen { showRecipe = false }
+            .fullScreenCover(item: $recipeSource) { source in
+                RecipeScreen(source: source) { recipeSource = nil }
             }
     }
 
@@ -71,15 +71,17 @@ struct MainView: View {
         switch tab {
         case .home:
             NavigationStack {
-                HomeScreen(goToTab: { tab = $0 }, openRecipe: { showRecipe = true })
+                HomeScreen(goToTab: { tab = $0 },
+                           openRecipe: { recipeSource = $0 })
             }
         case .plan:
             NavigationStack {
-                PlanScreen(goToTab: { tab = $0 }, openRecipe: { showRecipe = true })
+                PlanScreen(goToTab: { tab = $0 },
+                           openRecipe: { recipeSource = $0 })
             }
         case .cook:
             NavigationStack {
-                CookbookScreen(openRecipe: { showRecipe = true })
+                CookbookScreen(openRecipe: { recipeSource = $0 })
             }
         case .shop:
             NavigationStack { ShoppingScreen() }

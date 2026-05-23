@@ -8,7 +8,7 @@ import SwiftUI
 /// follow-up iterations.
 struct HomeScreen: View {
     var goToTab: (Tab) -> Void = { _ in }
-    var openRecipe: () -> Void = {}
+    var openRecipe: (RecipeSource) -> Void = { _ in }
 
     @Environment(AuthModel.self) private var auth
 
@@ -243,7 +243,7 @@ struct HomeScreen: View {
                 tonightMeta(notes: meal.notes)
                     .padding(.top, 8)
                 HStack(spacing: 8) {
-                    Button(action: openRecipe) {
+                    Button { openRecipe(.mealPlanDay(meal)) } label: {
                         Text("View Recipe")
                             .font(Theme.sans(14, weight: .semibold))
                             .foregroundStyle(.white)

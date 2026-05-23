@@ -7,7 +7,7 @@ import SwiftUI
 /// and shopping summary stay in place.
 struct PlanScreen: View {
     var goToTab: (Tab) -> Void = { _ in }
-    var openRecipe: () -> Void = {}
+    var openRecipe: (RecipeSource) -> Void = { _ in }
 
     @Environment(AuthModel.self) private var auth
     @State private var showCalendar = false
@@ -192,7 +192,7 @@ struct PlanScreen: View {
         let today = Calendar.current.component(.weekday, from: Date()) - 1  // 0..6
         return VStack(spacing: 10) {
             ForEach(sortedDays(plan)) { day in
-                Button(action: openRecipe) {
+                Button { openRecipe(.mealPlanDay(day)) } label: {
                     mealRow(day: day, isToday: day.dayOfWeek == today, plan: plan)
                 }
                 .buttonStyle(.plain)

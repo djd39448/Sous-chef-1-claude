@@ -75,6 +75,101 @@ struct APIClient {
         return data
     }
 
+    // MARK: - Server-Sent Events
+
+    /// One frame of a Server-Sent Events stream — the JSON payload that
+    /// followed `data: `. Multi-line events are concatenated with `\n`,
+    /// matching the SSE spec; our backend always emits one `data:` line
+    /// per event, but the reader handles both.
+    struct SSEEvent: Sendable {
+        let data: String
+    }
+
+    /// Open a streaming POST to `path` (or any method) and yield each
+    /// `data:` frame as it arrives. Closes naturally when the server
+    /// closes the connection; throws if the request fails or auth is
+    /// missing. On 401 the user is signed out so the UI bounces back to
+    /// SignIn rather than getting stuck.
+    func stream<Body: Encodable>(
+        path: String,
+        method: String = "POST",
+        body: Body
+    ) -> AsyncThrowingStream<SSEEvent, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                guard let token = auth.session?.accessToken else {
+                    continuation.finish(throwing: APIError.missingAuth)
+                    return
+                }
+                let url = baseURL.appendingPathComponent(path)
+                var req = URLRequest(url: url)
+                req.httpMethod = method
+                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                req.timeoutInterval = 300   // long-lived stream — OpenAI completions can stretch
+                do {
+                    req.httpBody = try JSONEncoder().encode(body)
+                } catch {
+                    continuation.finish(throwing: APIError.decoding(error))
+                    return
+                }
+
+                do {
+                    let (bytes, resp) = try await URLSession.shared.bytes(for: req)
+                    guard let http = resp as? HTTPURLResponse else {
+                        continuation.finish(throwing: APIError.other("non-HTTP response"))
+                        return
+                    }
+                    if http.statusCode == 401 {
+                        await MainActor.run { auth.signOut() }
+                        continuation.finish(throwing: APIError.missingAuth)
+                        return
+                    }
+                    if !(200..<300).contains(http.statusCode) {
+                        continuation.finish(throwing: APIError.badResponse(
+                            status: http.statusCode, body: ""))
+                        return
+                    }
+
+                    // Read line by line. SSE separates events with a blank
+                    // line; within an event, `data:` lines accumulate.
+                    var buffer: [String] = []
+                    for try await line in bytes.lines {
+                        if line.isEmpty {
+                            if !buffer.isEmpty {
+                                continuation.yield(SSEEvent(data: buffer.joined(separator: "\n")))
+                                buffer.removeAll(keepingCapacity: true)
+                            }
+                            continue
+                        }
+                        if let payload = parseDataLine(line) {
+                            buffer.append(payload)
+                        }
+                    }
+                    // Flush any trailing event without a closing blank line.
+                    if !buffer.isEmpty {
+                        continuation.yield(SSEEvent(data: buffer.joined(separator: "\n")))
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch let e as URLError {
+                    continuation.finish(throwing: APIError.network(e))
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func parseDataLine(_ line: String) -> String? {
+        guard line.hasPrefix("data:") else { return nil }
+        let payload = line.dropFirst("data:".count)
+        let trimmed = payload.hasPrefix(" ") ? String(payload.dropFirst()) : String(payload)
+        return trimmed
+    }
+
     /// Shared JSON decoder. Accepts ISO-8601 timestamps both with and without
     /// fractional seconds (Go's `time.Time` emits fractional; the iOS
     /// `.iso8601` strategy alone would reject those).

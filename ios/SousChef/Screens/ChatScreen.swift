@@ -1,9 +1,29 @@
 import SwiftUI
 
-/// The Chat tab — conversational assistant with a composer.
+/// The Chat tab — conversational assistant with streaming replies.
+///
+/// Wired to:
+///   - `GET  /api/kitchen/conversation` — load the user's default
+///     conversation with its history.
+///   - `POST /api/kitchen/message` — send a message and read the SSE
+///     stream (`{content:…}` chunks, terminated by `{done:true}`).
+///
+/// While the assistant reply streams, the in-progress text is rendered
+/// in a live bubble with a blinking cursor; on `done` the conversation
+/// is refetched so the persisted assistant message (and any
+/// tool-call side effects) become visible. On `error` the in-progress
+/// content is dropped and an inline error appears.
 struct ChatScreen: View {
-    @State private var messages = Samples.chat
+    @Environment(AuthModel.self) private var auth
+
+    @State private var conversation: ConversationWithMessages?
     @State private var draft = ""
+    @State private var streamingContent = ""
+    @State private var isStreaming = false
+    @State private var loadState: LoadState = .loading
+    @State private var lastError: String?
+
+    private enum LoadState { case loading, loaded, failed(String) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -13,6 +33,24 @@ struct ChatScreen: View {
         }
         .background(Theme.bg)
         .navigationBarHidden(true)
+        .task { await load() }
+    }
+
+    private var client: APIClient {
+        APIClient(baseURL: AppConfig.backendBaseURL, auth: auth)
+    }
+
+    // MARK: Load history
+
+    private func load() async {
+        loadState = .loading
+        do {
+            let c: ConversationWithMessages = try await client.get("/api/kitchen/conversation")
+            conversation = c
+            loadState = .loaded
+        } catch {
+            loadState = .failed(error.localizedDescription)
+        }
     }
 
     // MARK: Header
@@ -32,9 +70,9 @@ struct ChatScreen: View {
                             .font(Theme.sans(15, weight: .semibold))
                             .foregroundStyle(Theme.ink)
                     }
-                    Text("● Online")
+                    Text(isStreaming ? "● Thinking…" : "● Online")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Theme.sage)
+                        .foregroundStyle(isStreaming ? Theme.terra : Theme.sage)
                 }
                 Spacer()
                 IconButton(icon: "settings")
@@ -49,46 +87,86 @@ struct ChatScreen: View {
     // MARK: Messages
 
     private var messagesList: some View {
-        ScrollView {
-            VStack(spacing: 12) {
-                Text("Today · 6:42 PM")
-                    .font(.system(size: 11, weight: .medium))
-                    .tracking(0.3)
-                    .foregroundStyle(Theme.ink3)
-                    .padding(.bottom, 4)
-
-                ForEach(messages) { message in
-                    bubble(for: message)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    switch loadState {
+                    case .loading:
+                        ProgressView().tint(Theme.terra).padding(.top, 40)
+                    case .failed(let msg):
+                        loadFailedCard(msg)
+                    case .loaded:
+                        if let c = conversation {
+                            messageColumn(messages: c.messages)
+                        }
+                        // Anchor at the bottom so scrollTo can target it.
+                        Color.clear
+                            .frame(height: 1)
+                            .id("BOTTOM")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 16)
+                .padding(.top, 18)
+                .padding(.bottom, 12)
+            }
+            .onChange(of: streamingContent) { _, _ in
+                withAnimation(.easeOut(duration: 0.15)) {
+                    proxy.scrollTo("BOTTOM", anchor: .bottom)
                 }
             }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 16)
-            .padding(.top, 18)
-            .padding(.bottom, 12)
+            .onChange(of: conversation?.messages.count ?? 0) { _, _ in
+                withAnimation(.easeOut(duration: 0.15)) {
+                    proxy.scrollTo("BOTTOM", anchor: .bottom)
+                }
+            }
         }
         .frame(maxHeight: .infinity)
     }
 
     @ViewBuilder
-    private func bubble(for message: ChatMessage) -> some View {
-        switch message.role {
-        case .tool:
-            HStack(spacing: 6) {
-                SCIcon("check", size: 12, color: Theme.sage, weight: .bold)
-                Text(message.text)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Theme.ink2)
+    private func messageColumn(messages: [Message]) -> some View {
+        if messages.isEmpty && !isStreaming {
+            emptyState
+        } else {
+            // Real persisted messages.
+            ForEach(messages) { m in
+                bubble(role: m.role, text: m.content, streaming: false)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(Theme.sageSoft)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.hairline2, lineWidth: 1))
-            .frame(maxWidth: .infinity)
-        case .user:
+            // The in-progress assistant reply (only while a stream is open).
+            if isStreaming || !streamingContent.isEmpty {
+                bubble(role: "assistant", text: streamingContent, streaming: isStreaming)
+            }
+            if let err = lastError {
+                Text(err)
+                    .font(Theme.sans(13))
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Text("Say hi to Sous Chef.")
+                .font(Theme.display(20, weight: .medium))
+                .foregroundStyle(Theme.ink)
+            Text("Tell it what you have in the fridge, ask for a quick dinner, or have it plan your week.")
+                .font(Theme.sans(14))
+                .foregroundStyle(Theme.ink2)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.top, 40)
+        .padding(.horizontal, 24)
+    }
+
+    @ViewBuilder
+    private func bubble(role: String, text: String, streaming: Bool) -> some View {
+        if role == "user" {
             HStack {
                 Spacer(minLength: 40)
-                Text(message.text)
+                Text(text)
                     .font(Theme.sans(14.5))
                     .foregroundStyle(Theme.bg)
                     .padding(.horizontal, 14)
@@ -97,7 +175,7 @@ struct ChatScreen: View {
                     .clipShape(UnevenRoundedRectangle(cornerRadii: .init(
                         topLeading: 18, bottomLeading: 18, bottomTrailing: 6, topTrailing: 18)))
             }
-        case .assistant:
+        } else {
             VStack(alignment: .leading, spacing: 4) {
                 Text("SOUS CHEF")
                     .font(.system(size: 10, weight: .bold))
@@ -105,10 +183,12 @@ struct ChatScreen: View {
                     .foregroundStyle(Theme.ink3)
                     .padding(.leading, 14)
                 HStack(alignment: .top, spacing: 0) {
-                    Text(message.text)
+                    Text(text.isEmpty && streaming ? " " : text)
                         .font(Theme.sans(14.5))
                         .foregroundStyle(Theme.ink)
-                    if message.streaming { BlinkingCursor().padding(.leading, 2) }
+                    if streaming {
+                        BlinkingCursor().padding(.leading, 2)
+                    }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 11)
@@ -126,41 +206,51 @@ struct ChatScreen: View {
         }
     }
 
+    private func loadFailedCard(_ message: String) -> some View {
+        VStack(spacing: 8) {
+            Text("Couldn't load the chat.")
+                .font(Theme.display(18, weight: .medium))
+                .foregroundStyle(Theme.ink)
+            Text(message)
+                .font(Theme.sans(13))
+                .foregroundStyle(Theme.ink2)
+                .multilineTextAlignment(.center)
+            Button { Task { await load() } } label: {
+                Text("Try again")
+                    .font(Theme.sans(14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16).frame(height: 40)
+                    .background(Theme.terra)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.top, 40).padding(.horizontal, 24)
+    }
+
     // MARK: Composer
 
     private var composer: some View {
         VStack(spacing: 0) {
             Hairline()
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    Chip(label: "Plan my week", icon: "sparkle")
-                    Chip(label: "Make a shopping list")
-                    Chip(label: "What can I make tonight?")
-                }
-                .padding(.horizontal, 12)
-            }
-            .padding(.top, 10)
-            .padding(.bottom, 10)
-
             HStack(spacing: 8) {
                 TextField("", text: $draft,
-                          prompt: Text("Message Sous Chef…").foregroundColor(Theme.ink3))
+                          prompt: Text("Message Sous Chef…").foregroundColor(Theme.ink3),
+                          axis: .vertical)
+                    .lineLimit(1...4)
                     .font(Theme.sans(14))
                     .foregroundStyle(Theme.ink)
                     .padding(.leading, 16)
                     .padding(.vertical, 6)
-                Button {
-                    if !draft.trimmingCharacters(in: .whitespaces).isEmpty {
-                        messages.append(ChatMessage(role: .user, text: draft))
-                        draft = ""
-                    }
-                } label: {
+                    .disabled(isStreaming)
+                Button { Task { await send() } } label: {
                     SCIcon("send", size: 16, color: .white)
                         .frame(width: 36, height: 36)
-                        .background(Theme.terra)
+                        .background(canSend ? Theme.terra : Theme.ink4)
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .disabled(!canSend)
                 .padding(.trailing, 6)
             }
             .frame(minHeight: 44)
@@ -168,15 +258,85 @@ struct ChatScreen: View {
             .clipShape(RoundedRectangle(cornerRadius: 22))
             .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(Theme.hairline2, lineWidth: 1))
             .padding(.horizontal, 12)
+            .padding(.top, 10)
             .padding(.bottom, 8)
         }
         .background(Theme.bg)
+    }
+
+    private var canSend: Bool {
+        !isStreaming && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    // MARK: Send + stream
+
+    private struct SendBody: Encodable {
+        let content: String
+        let conversationId: Int?
+    }
+
+    private struct StreamChunk: Decodable {
+        let content: String?
+        let done: Bool?
+        let error: String?
+    }
+
+    @MainActor
+    private func send() async {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+
+        // Optimistically show the user's bubble — assign a temporary id that
+        // won't collide with server ids (negative).
+        if var conv = conversation {
+            let synthetic = Message(
+                id: -Int(Date().timeIntervalSince1970 * 1000),
+                conversationId: conv.id,
+                role: "user",
+                content: text,
+                createdAt: Date()
+            )
+            conv = ConversationWithMessages(
+                id: conv.id, userId: conv.userId, title: conv.title,
+                createdAt: conv.createdAt, updatedAt: Date(),
+                messages: conv.messages + [synthetic]
+            )
+            conversation = conv
+        }
+        draft = ""
+        lastError = nil
+        streamingContent = ""
+        isStreaming = true
+
+        let body = SendBody(content: text, conversationId: conversation?.id)
+        let decoder = JSONDecoder()
+        do {
+            for try await event in client.stream(path: "/api/kitchen/message", body: body) {
+                let chunk = try decoder.decode(StreamChunk.self, from: Data(event.data.utf8))
+                if let delta = chunk.content {
+                    streamingContent += delta
+                } else if let err = chunk.error {
+                    lastError = err
+                } else if chunk.done == true {
+                    break
+                }
+            }
+        } catch {
+            lastError = error.localizedDescription
+        }
+        isStreaming = false
+        streamingContent = ""
+
+        // The contract says: tool calls run server-side and the client
+        // refetches affected resources after the stream ends. Re-loading
+        // the conversation picks up the persisted assistant message; other
+        // tabs refresh on their own next view.
+        await load()
     }
 }
 
 private struct BlinkingCursor: View {
     @State private var visible = true
-
     var body: some View {
         Rectangle()
             .fill(Theme.ink)

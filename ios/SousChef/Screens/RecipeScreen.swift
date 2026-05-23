@@ -1,33 +1,40 @@
 import SwiftUI
 
-/// The full-screen recipe detail — hero, ingredients, instructions, and the
-/// floating "ask about this recipe" pill. Presented over the tab bar.
+// Recipe screens come from two sources: a meal-plan day (may need
+// AI-generation streamed in) or a saved cookbook recipe (always has full
+// content). `RecipeSource` keeps both paths inside one presentation.
+enum RecipeSource: Identifiable {
+    case mealPlanDay(MealPlanDay)
+    case cookbook(CookbookRecipe)
+
+    var id: String {
+        switch self {
+        case .mealPlanDay(let day): return "mpd-\(day.id)"
+        case .cookbook(let recipe): return "cb-\(recipe.id)"
+        }
+    }
+}
+
+/// The full-screen recipe detail.
+///
+/// For a `.mealPlanDay`: if the day already has `recipeContent`, render
+/// it; otherwise open `POST /api/kitchen/generate-recipe/{dayId}` and
+/// stream the Markdown in live. On `done` the server also persists the
+/// content + the image prompt on the day row.
+///
+/// For a `.cookbook` recipe: render the saved Markdown content — no
+/// streaming needed.
 struct RecipeScreen: View {
+    let source: RecipeSource
     var onClose: () -> Void = {}
 
-    @State private var saved = true
-    @State private var have: Set<Int> = [1, 4, 5]
+    @Environment(AuthModel.self) private var auth
 
-    private let ingredients = [
-        "12 oz spaghetti",
-        "6 oz guanciale or pancetta, diced",
-        "4 large egg yolks",
-        "1 whole egg",
-        "1 cup pecorino romano, grated",
-        "½ cup parmesan, grated",
-        "2 garlic cloves, smashed",
-        "freshly ground black pepper",
-        "kosher salt",
-    ]
-
-    private let steps = [
-        "Bring a large pot of well-salted water to a boil.",
-        "Whisk egg yolks, whole egg, pecorino, and parmesan in a bowl until thick.",
-        "Crisp the guanciale in a dry skillet over medium heat, 6–8 min. Add garlic; cook 30 seconds.",
-        "Cook spaghetti until just shy of al dente. Reserve 1 cup pasta water.",
-        "Off heat: toss pasta with guanciale, then with the cheese-egg mixture. Add pasta water in splashes until silky.",
-        "Finish with cracked pepper. Serve immediately.",
-    ]
+    @State private var content: String = ""
+    @State private var imagePrompt: String?
+    @State private var isStreaming = false
+    @State private var errorMessage: String?
+    @State private var saved = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -36,6 +43,75 @@ struct RecipeScreen: View {
         }
         .background(Theme.bg)
         .overlay(alignment: .top) { topButtons }
+        .task { await load() }
+    }
+
+    private var client: APIClient {
+        APIClient(baseURL: AppConfig.backendBaseURL, auth: auth)
+    }
+
+    // MARK: Derived
+
+    private var title: String {
+        switch source {
+        case .mealPlanDay(let day): return day.mealName
+        case .cookbook(let recipe): return recipe.title
+        }
+    }
+
+    private var heroImage: String {
+        ImageLookup.url(for: title)
+    }
+
+    // MARK: Load
+
+    private func load() async {
+        switch source {
+        case .cookbook(let recipe):
+            content = recipe.content
+            errorMessage = nil
+            return
+        case .mealPlanDay(let day):
+            if let existing = day.recipeContent, !existing.isEmpty {
+                content = existing
+                return
+            }
+            await streamGenerate(dayId: day.id)
+        }
+    }
+
+    private struct RecipeChunk: Decodable {
+        let content: String?
+        let imagePrompt: String?
+        let done: Bool?
+        let error: String?
+    }
+
+    @MainActor
+    private func streamGenerate(dayId: Int) async {
+        isStreaming = true
+        content = ""
+        errorMessage = nil
+        let decoder = JSONDecoder()
+        do {
+            for try await event in client.stream(
+                path: "/api/kitchen/generate-recipe/\(dayId)",
+                body: [String: String]()
+            ) {
+                let chunk = try decoder.decode(RecipeChunk.self, from: Data(event.data.utf8))
+                if let delta = chunk.content {
+                    content += delta
+                } else if let prompt = chunk.imagePrompt, chunk.done == true {
+                    imagePrompt = prompt
+                    break
+                } else if let err = chunk.error {
+                    errorMessage = err
+                }
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isStreaming = false
     }
 
     // MARK: Scroll content
@@ -45,23 +121,21 @@ struct RecipeScreen: View {
             VStack(spacing: 0) {
                 hero
                 titleBlock
-                ingredientsSection
-                instructionsSection
-                Color.clear.frame(height: 110)   // clearance for the floating pill
+                if let errorMessage {
+                    errorCard(errorMessage)
+                }
+                recipeBody
+                Color.clear.frame(height: 130)   // clearance for the floating pill
             }
         }
         .ignoresSafeArea(edges: .top)
     }
 
-    // MARK: Hero
-
     private var hero: some View {
         Rectangle()
             .fill(Theme.elev)
             .frame(height: 380)
-            .overlay {
-                FoodImage(url: Food.carbonara)
-            }
+            .overlay { FoodImage(url: heroImage) }
             .clipped()
             .overlay {
                 LinearGradient(
@@ -74,26 +148,110 @@ struct RecipeScreen: View {
                     startPoint: .top, endPoint: .bottom
                 )
             }
-            .overlay(alignment: .bottomLeading) { generatedBadge }
+            .overlay(alignment: .bottomLeading) {
+                if case .mealPlanDay = source {
+                    HStack(spacing: 6) {
+                        SCIcon("sparkle", size: 11, color: Theme.terraDeep, weight: .bold)
+                        Text(isStreaming ? "GENERATING…" : "AI GENERATED")
+                            .font(.system(size: 10, weight: .semibold))
+                            .tracking(0.6)
+                    }
+                    .foregroundStyle(Theme.terraDeep)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(.white.opacity(0.92))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .padding(.leading, 20)
+                    .padding(.bottom, 22)
+                }
+            }
     }
 
-    private var generatedBadge: some View {
-        HStack(spacing: 6) {
-            SCIcon("sparkle", size: 11, color: Theme.terraDeep, weight: .bold)
-            Text("GENERATED FOR TUESDAY")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.6)
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title)
+                .font(Theme.display(32, weight: .medium))
+                .foregroundStyle(Theme.ink)
+                .tracking(-1)
         }
-        .foregroundStyle(Theme.terraDeep)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 4)
-        .background(.white.opacity(0.92))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .padding(.leading, 20)
-        .padding(.bottom, 22)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.top, -8)
+        .padding(.bottom, 12)
     }
 
-    // MARK: Top buttons (over hero)
+    private var recipeBody: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if content.isEmpty && isStreaming {
+                HStack(spacing: 8) {
+                    ProgressView().tint(Theme.terra)
+                    Text("Cooking up your recipe…")
+                        .font(Theme.sans(14))
+                        .foregroundStyle(Theme.ink3)
+                }
+            } else if content.isEmpty {
+                Text("No recipe content yet.")
+                    .font(Theme.sans(14))
+                    .foregroundStyle(Theme.ink3)
+            } else {
+                Text(renderedContent)
+                    .font(Theme.sans(15))
+                    .foregroundStyle(Theme.ink)
+                    .lineSpacing(4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(.horizontal, 20)
+    }
+
+    /// Inline Markdown — bold / italic / links render; block elements like
+    /// headings and lists pass through as plain (still readable) text. A
+    /// proper structured renderer (Ingredients + Instructions cards from
+    /// the design) is a follow-up.
+    private var renderedContent: AttributedString {
+        // Drop the leading "# Title" line since we render the title above.
+        let body: String = {
+            var s = content
+            if s.hasPrefix("# ") {
+                if let nl = s.firstIndex(of: "\n") {
+                    s = String(s[s.index(after: nl)...])
+                    while s.hasPrefix("\n") { s.removeFirst() }
+                }
+            }
+            return s
+        }()
+        if let attr = try? AttributedString(
+            markdown: body,
+            options: AttributedString.MarkdownParsingOptions(
+                interpretedSyntax: .inlineOnlyPreservingWhitespace
+            )
+        ) {
+            return attr
+        }
+        return AttributedString(body)
+    }
+
+    private func errorCard(_ message: String) -> some View {
+        HStack(spacing: 10) {
+            SCIcon("close", size: 14, color: .white)
+                .frame(width: 28, height: 28)
+                .background(.red)
+                .clipShape(Circle())
+            Text(message)
+                .font(Theme.sans(13))
+                .foregroundStyle(Theme.ink)
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(Theme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.hairline2, lineWidth: 1))
+        .padding(.horizontal, 20)
+        .padding(.bottom, 12)
+    }
+
+    // MARK: Top buttons
 
     private var topButtons: some View {
         HStack {
@@ -110,7 +268,9 @@ struct RecipeScreen: View {
         .padding(.horizontal, 14)
     }
 
-    private func heroButton(_ icon: String, color: Color = Theme.ink, action: @escaping () -> Void = {}) -> some View {
+    private func heroButton(_ icon: String,
+                            color: Color = Theme.ink,
+                            action: @escaping () -> Void = {}) -> some View {
         Button(action: action) {
             SCIcon(icon, size: 18, color: color)
                 .frame(width: 36, height: 36)
@@ -120,162 +280,7 @@ struct RecipeScreen: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: Title block
-
-    private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Pasta Carbonara")
-                .font(Theme.display(32, weight: .medium))
-                .foregroundStyle(Theme.ink)
-                .tracking(-1)
-
-            Text("Silky, peppery, deeply savoury — the Roman classic, made with what's in your fridge.")
-                .font(Theme.sans(15))
-                .foregroundStyle(Theme.ink2)
-                .lineSpacing(3)
-                .padding(.top, 6)
-                .padding(.bottom, 16)
-
-            metaCard
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, -8)
-    }
-
-    private var metaCard: some View {
-        HStack(spacing: 0) {
-            metaCell("PREP", "10 min")
-            divider
-            metaCell("COOK", "20 min")
-            divider
-            metaCell("SERVES", "4")
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .cardSurface(14)
-    }
-
-    private func metaCell(_ label: String, _ value: String) -> some View {
-        VStack(spacing: 2) {
-            Text(label)
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.6)
-                .foregroundStyle(Theme.ink3)
-            Text(value)
-                .font(Theme.display(18, weight: .medium))
-                .foregroundStyle(Theme.ink)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private var divider: some View {
-        Rectangle().fill(Theme.hairline).frame(width: 0.5)
-    }
-
-    // MARK: Ingredients
-
-    private var ingredientsSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Ingredients")
-                    .font(Theme.display(22, weight: .medium))
-                    .foregroundStyle(Theme.ink)
-                Spacer()
-                Text("3 of 9 you have")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.ink3)
-            }
-            .padding(.bottom, 14)
-
-            VStack(spacing: 0) {
-                ForEach(Array(ingredients.enumerated()), id: \.offset) { index, ing in
-                    ingredientRow(index: index, text: ing)
-                    if index < ingredients.count - 1 { Hairline() }
-                }
-            }
-            .cardSurface(18)
-
-            Button { } label: {
-                HStack(spacing: 6) {
-                    SCIcon("cart", size: 16, color: Theme.ink)
-                    Text("Add 6 missing to shopping list")
-                        .font(Theme.sans(13, weight: .semibold))
-                }
-                .foregroundStyle(Theme.ink)
-                .frame(maxWidth: .infinity)
-                .frame(height: 44)
-                .background(Theme.sageSoft)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.hairline2, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 12)
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 28)
-    }
-
-    private func ingredientRow(index: Int, text: String) -> some View {
-        let checked = have.contains(index)
-        return Button {
-            if checked { have.remove(index) } else { have.insert(index) }
-        } label: {
-            HStack(spacing: 12) {
-                ZStack {
-                    if checked {
-                        RoundedRectangle(cornerRadius: 6).fill(Theme.sage)
-                        SCIcon("check", size: 12, color: .white, weight: .bold)
-                    } else {
-                        RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(Theme.ink4, lineWidth: 1.5)
-                    }
-                }
-                .frame(width: 20, height: 20)
-                Text(text)
-                    .font(Theme.sans(14))
-                    .foregroundStyle(Theme.ink)
-                    .strikethrough(checked)
-                    .opacity(checked ? 0.5 : 1)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 13)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: Instructions
-
-    private var instructionsSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Instructions")
-                .font(Theme.display(22, weight: .medium))
-                .foregroundStyle(Theme.ink)
-                .padding(.bottom, 0)
-
-            ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
-                HStack(alignment: .top, spacing: 14) {
-                    Text("\(index + 1)")
-                        .font(Theme.display(14, weight: .semibold))
-                        .foregroundStyle(Theme.terraDeep)
-                        .frame(width: 28, height: 28)
-                        .background(Theme.terraSoft)
-                        .clipShape(Circle())
-                    Text(step)
-                        .font(Theme.sans(14))
-                        .foregroundStyle(Theme.ink)
-                        .lineSpacing(4)
-                        .padding(.top, 4)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 20)
-        .padding(.top, 32)
-    }
-
-    // MARK: Floating pill
+    // MARK: Floating pill (placeholder — /recipe-message wires in a later pass)
 
     private var floatingPill: some View {
         HStack(spacing: 10) {
