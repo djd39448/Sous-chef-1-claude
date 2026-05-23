@@ -1,9 +1,24 @@
 import SwiftUI
 
 /// The Home tab — tonight's dinner, the week strip, a chat shortcut, the pantry.
+///
+/// Data-wired sections: header (greeting, date, avatar from `Profile`),
+/// tonight card (today's `MealPlanDay`), week strip (the plan's 7 days).
+/// Chat shortcut and pantry are still on mock content; both are wired in
+/// follow-up iterations.
 struct HomeScreen: View {
     var goToTab: (Tab) -> Void = { _ in }
     var openRecipe: () -> Void = {}
+
+    @Environment(AuthModel.self) private var auth
+
+    @State private var loadState: LoadState = .loading
+
+    private enum LoadState {
+        case loading
+        case loaded(profile: Profile, plan: MealPlanWithDays?)
+        case failed(String)
+    }
 
     var body: some View {
         ScrollView {
@@ -17,23 +32,93 @@ struct HomeScreen: View {
         }
         .background(Theme.bg)
         .navigationBarHidden(true)
+        .task { await load() }
+        .refreshable { await load() }
     }
+
+    // MARK: Loading
+
+    private func load() async {
+        loadState = .loading
+        let client = APIClient(baseURL: AppConfig.backendBaseURL, auth: auth)
+        do {
+            async let profileTask: Profile = client.get("/api/auth/user")
+            async let planTask: MealPlanWithDays? = client.get("/api/kitchen/meal-plan")
+            let profile = try await profileTask
+            let plan = try await planTask
+            loadState = .loaded(profile: profile, plan: plan)
+        } catch {
+            loadState = .failed(error.localizedDescription)
+        }
+    }
+
+    // MARK: Derived
+
+    private var profile: Profile? {
+        if case .loaded(let p, _) = loadState { return p } else { return nil }
+    }
+
+    private var plan: MealPlanWithDays? {
+        if case .loaded(_, let p) = loadState { return p } else { return nil }
+    }
+
+    private var todayDayOfWeek: Int {
+        let weekday = Calendar.current.component(.weekday, from: Date())
+        return weekday - 1   // Calendar's 1=Sun → 0=Sun
+    }
+
+    private var todayMeal: MealPlanDay? {
+        plan?.days.first { $0.dayOfWeek == todayDayOfWeek }
+    }
+
+    /// Plan days sorted Monday-first (Sun last), matching the design's week strip.
+    private var weekDays: [MealPlanDay] {
+        guard let plan else { return [] }
+        return plan.days.sorted { lhs, rhs in
+            let l = lhs.dayOfWeek == 0 ? 7 : lhs.dayOfWeek
+            let r = rhs.dayOfWeek == 0 ? 7 : rhs.dayOfWeek
+            return l < r
+        }
+    }
+
+    private var greeting: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        let timeWord = hour < 12 ? "Morning" : hour < 17 ? "Afternoon" : "Evening"
+        let name = profile?.firstName
+            ?? profile?.email?.split(separator: "@").first.map(String.init)
+            ?? "there"
+        return "\(timeWord), \(name)."
+    }
+
+    private var todayHeader: String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "EEEE · MMM d"
+        return fmt.string(from: Date()).uppercased()
+    }
+
+    private var avatarInitial: String {
+        let source = profile?.firstName ?? profile?.email ?? ""
+        return source.prefix(1).uppercased()
+    }
+
+    private static let dayAbbrev = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]
 
     // MARK: Header
 
     private var headerRow: some View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("TUESDAY · MAY 26")
+                Text(todayHeader)
                     .font(.system(size: 13, weight: .medium))
                     .tracking(0.2)
                     .foregroundStyle(Theme.ink3)
-                Text("Evening, Dave.")
+                Text(greeting)
                     .font(Theme.display(30, weight: .medium))
                     .foregroundStyle(Theme.ink)
+                    .redacted(reason: profile == nil ? .placeholder : [])
             }
             Spacer()
-            Text("D")
+            Text(avatarInitial.isEmpty ? "·" : avatarInitial)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Theme.terraDeep)
                 .frame(width: 40, height: 40)
@@ -47,12 +132,74 @@ struct HomeScreen: View {
 
     // MARK: Tonight
 
+    @ViewBuilder
     private var tonightCard: some View {
+        switch loadState {
+        case .loading:
+            tonightSkeleton
+        case .failed(let message):
+            errorCard(message: message)
+        case .loaded(_, .none):
+            tonightEmpty
+        case .loaded(_, .some):
+            if let meal = todayMeal {
+                tonightLoaded(meal: meal)
+            } else {
+                tonightEmpty
+            }
+        }
+    }
+
+    private var tonightSkeleton: some View {
         VStack(spacing: 0) {
             Rectangle()
                 .fill(Theme.elev)
                 .aspectRatio(16.0 / 10.0, contentMode: .fit)
-                .overlay { FoodImage(url: Food.carbonara) }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Loading tonight's dinner…")
+                    .font(Theme.display(20, weight: .medium))
+                    .foregroundStyle(Theme.ink3)
+                ProgressView().tint(Theme.terra)
+            }
+            .padding(20)
+        }
+        .cardSurface(24)
+        .padding(.horizontal, 16)
+    }
+
+    private var tonightEmpty: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("No meal plan for this week yet.")
+                .font(Theme.display(20, weight: .medium))
+                .foregroundStyle(Theme.ink)
+            Text("Ask Sous Chef to plan your week from the chat.")
+                .font(Theme.sans(14))
+                .foregroundStyle(Theme.ink2)
+            Button { goToTab(.chat) } label: {
+                HStack(spacing: 8) {
+                    SCIcon("sparkle", size: 16, color: .white)
+                    Text("Plan my week").font(Theme.sans(14, weight: .semibold))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .frame(height: 44)
+                .background(Theme.terra)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(20)
+        .cardSurface(24)
+        .padding(.horizontal, 16)
+    }
+
+    private func tonightLoaded(meal: MealPlanDay) -> some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(Theme.elev)
+                .aspectRatio(16.0 / 10.0, contentMode: .fit)
+                .overlay { FoodImage(url: imageURL(for: meal.mealName)) }
                 .clipped()
                 .overlay(alignment: .topLeading) {
                     Text("TONIGHT'S DINNER")
@@ -67,10 +214,10 @@ struct HomeScreen: View {
                 }
 
             VStack(alignment: .leading, spacing: 0) {
-                Text("Pasta Carbonara")
+                Text(meal.mealName)
                     .font(Theme.display(24, weight: .medium))
                     .foregroundStyle(Theme.ink)
-                tonightMeta
+                tonightMeta(notes: meal.notes)
                     .padding(.top, 8)
                 HStack(spacing: 8) {
                     Button(action: openRecipe) {
@@ -106,9 +253,9 @@ struct HomeScreen: View {
         .padding(.horizontal, 16)
     }
 
-    private var tonightMeta: some View {
+    private func tonightMeta(notes: String?) -> some View {
         HStack(spacing: 14) {
-            metaItem("clock", "30 min")
+            metaItem("clock", notes ?? "—")
             metaDot
             metaItem("people", "Serves 4")
             metaDot
@@ -130,8 +277,34 @@ struct HomeScreen: View {
         Circle().fill(Theme.ink4).frame(width: 2, height: 2)
     }
 
+    private func errorCard(message: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Couldn't load your kitchen.")
+                .font(Theme.display(20, weight: .medium))
+                .foregroundStyle(Theme.ink)
+            Text(message)
+                .font(Theme.sans(13))
+                .foregroundStyle(Theme.ink2)
+            Button { Task { await load() } } label: {
+                Text("Try again")
+                    .font(Theme.sans(14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16)
+                    .frame(height: 40)
+                    .background(Theme.terra)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(20)
+        .cardSurface(24)
+        .padding(.horizontal, 16)
+    }
+
     // MARK: This week
 
+    @ViewBuilder
     private var weekSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
@@ -152,8 +325,10 @@ struct HomeScreen: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    ForEach(Samples.weekStrip) { day in
-                        dayCard(day)
+                    if weekDays.isEmpty {
+                        ForEach(0..<7, id: \.self) { _ in placeholderDayCard }
+                    } else {
+                        ForEach(weekDays) { day in dayCard(day) }
                     }
                 }
                 .padding(.horizontal, 20)
@@ -162,39 +337,50 @@ struct HomeScreen: View {
         }
     }
 
-    private func dayCard(_ day: WeekDay) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(day.abbrev.uppercased())
+    private func dayCard(_ day: MealPlanDay) -> some View {
+        let isToday = day.dayOfWeek == todayDayOfWeek
+        return VStack(alignment: .leading, spacing: 0) {
+            Text(Self.dayAbbrev[day.dayOfWeek])
                 .font(.system(size: 11, weight: .semibold))
                 .tracking(0.4)
                 .opacity(0.7)
-            Text(day.meal)
+            Text(day.mealName)
                 .font(.system(size: 12, weight: .medium))
                 .lineLimit(2)
                 .frame(height: 30, alignment: .top)
                 .padding(.top, 8)
         }
-        .foregroundStyle(day.today ? Theme.bg : Theme.ink)
+        .foregroundStyle(isToday ? Theme.bg : Theme.ink)
         .frame(width: 88, alignment: .leading)
         .padding(12)
-        .background(day.today ? Theme.ink : Theme.card)
+        .background(isToday ? Theme.ink : Theme.card)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .strokeBorder(Theme.hairline2, lineWidth: day.today ? 0 : 1)
+                .strokeBorder(Theme.hairline2, lineWidth: isToday ? 0 : 1)
         )
-        .overlay(alignment: .topTrailing) {
-            if day.done {
-                SCIcon("check", size: 9, color: .white, weight: .bold)
-                    .frame(width: 14, height: 14)
-                    .background(Theme.sage)
-                    .clipShape(Circle())
-                    .padding(10)
-            }
-        }
     }
 
-    // MARK: Chat shortcut
+    private var placeholderDayCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("—")
+                .font(.system(size: 11, weight: .semibold))
+                .opacity(0.5)
+            Text("")
+                .frame(height: 30)
+        }
+        .foregroundStyle(Theme.ink3)
+        .frame(width: 88, alignment: .leading)
+        .padding(12)
+        .background(Theme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(Theme.hairline2, lineWidth: 1)
+        )
+    }
+
+    // MARK: Chat shortcut + pantry (still mock content)
 
     private var chatShortcut: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -224,8 +410,6 @@ struct HomeScreen: View {
         .padding(.horizontal, 16)
         .padding(.top, 26)
     }
-
-    // MARK: Pantry
 
     private var pantrySection: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -257,6 +441,24 @@ struct HomeScreen: View {
         .padding(.horizontal, 20)
         .padding(.top, 24)
         .padding(.bottom, 24)
+    }
+
+    // MARK: Image lookup for a meal name (rough — until the AI photo is wired)
+
+    private func imageURL(for mealName: String) -> String {
+        let lower = mealName.lowercased()
+        if lower.contains("carbonara") || lower.contains("pasta") { return Food.carbonara }
+        if lower.contains("salmon") { return Food.salmon }
+        if lower.contains("taco")    { return Food.tacos }
+        if lower.contains("stir")    { return Food.stirfry }
+        if lower.contains("pizza")   { return Food.pizza }
+        if lower.contains("soup")    { return Food.soup }
+        if lower.contains("rib")     { return Food.ribs }
+        if lower.contains("curry")   { return Food.curry }
+        if lower.contains("roast")   { return Food.roast }
+        if lower.contains("salad")   { return Food.salad }
+        if lower.contains("chicken") { return Food.chicken }
+        return Food.carbonara
     }
 }
 

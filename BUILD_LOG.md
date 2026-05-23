@@ -304,3 +304,47 @@ email to confirm".
 
 Next iteration: wire individual screens to real API calls — start with
 Home pulling `/api/auth/user` and the most-recent meal plan.
+
+---
+
+## 2026-05-23 · Home screen wired to live profile + meal plan ✅
+
+The first screen to actually talk to the backend. HomeScreen's header,
+tonight card, and week strip are now driven by fetches against
+`/api/auth/user` (Profile) and `/api/kitchen/meal-plan`
+(MealPlanWithDays?). Chat shortcut + pantry are still mock for the
+moment.
+
+- New: `SousChef/Networking/DTOs.swift` — Codable shapes mirroring the
+  contract's response types. Starting with `Profile`, `MealPlanDay`,
+  `MealPlanWithDays`; more as further screens are wired.
+
+- HomeScreen now:
+  - Holds a `LoadState` enum (loading / loaded / failed).
+  - Kicks off the fetch in a `.task` and supports pull-to-refresh.
+  - Greeting picks "Morning / Afternoon / Evening" by the current hour,
+    uses the user's first name (or email local-part, falling back to
+    "there").
+  - Date header is `Calendar.current` derived, not hardcoded.
+  - Avatar initial comes from the profile.
+  - Tonight card resolves today's `dayOfWeek` against the plan's days.
+  - Week strip renders the plan's days, Mon-first (Sun last), with the
+    today card highlighted by `dayOfWeek` match.
+  - Empty plan → an in-card "Plan my week" prompt that jumps to chat.
+  - Network / decoding failures → an error card with "Try again".
+
+Verified:
+- `xcodebuild iphonesimulator` clean, no warnings.
+- Booted the app on the iPhone 17 Pro simulator. Fresh install (after
+  `xcrun simctl keychain booted reset`) → SignIn screen, correct.
+- A pre-existing Keychain session → MainView + Home, with the error
+  card "Couldn't connect to the server" when the local backend is not
+  running. That confirms the data-load path runs and the error UI looks
+  right.
+
+Known follow-ups (small):
+- No auto-signout on 401. A stale Keychain session presents as
+  "Couldn't load your kitchen" with no easy escape. Adding sign-out
+  UI (and 401-as-signout in APIClient) is the next polish pass.
+- Chat shortcut and pantry sections still on mock content — wired when
+  we hit `/api/kitchen/ingredients` and the chat endpoints.
