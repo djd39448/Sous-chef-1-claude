@@ -35,6 +35,8 @@ struct RecipeScreen: View {
     @State private var isStreaming = false
     @State private var errorMessage: String?
     @State private var saved = false
+    @State private var isSaving = false
+    @State private var saveError: String?
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -68,8 +70,11 @@ struct RecipeScreen: View {
     private func load() async {
         switch source {
         case .cookbook(let recipe):
+            // The recipe is already in the cookbook — start in the "saved"
+            // state so the bookmark button reflects reality.
             content = recipe.content
             errorMessage = nil
+            saved = true
             return
         case .mealPlanDay(let day):
             if let existing = day.recipeContent, !existing.isEmpty {
@@ -112,10 +117,21 @@ struct RecipeScreen: View {
                     errorMessage = err
                 }
             }
+        } catch let e as APIError where e.isBenignCancellation {
+            // View went away — leave content/errorMessage as-is and bail.
+            isStreaming = false
+            return
         } catch {
             errorMessage = error.localizedDescription
         }
         isStreaming = false
+
+        // The stream closed cleanly but the model gave us nothing — surface
+        // a real "try again" affordance instead of leaving the user staring
+        // at "No recipe content yet."
+        if content.isEmpty && errorMessage == nil {
+            errorMessage = "The recipe didn't come through. Tap retry to try again."
+        }
     }
 
     // MARK: Scroll content
@@ -237,15 +253,36 @@ struct RecipeScreen: View {
     }
 
     private func errorCard(_ message: String) -> some View {
-        HStack(spacing: 10) {
-            SCIcon("close", size: 14, color: .white)
-                .frame(width: 28, height: 28)
-                .background(.red)
-                .clipShape(Circle())
-            Text(message)
-                .font(Theme.sans(13))
-                .foregroundStyle(Theme.ink)
-            Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                SCIcon("close", size: 14, color: .white)
+                    .frame(width: 28, height: 28)
+                    .background(.red)
+                    .clipShape(Circle())
+                Text(message)
+                    .font(Theme.sans(13))
+                    .foregroundStyle(Theme.ink)
+                Spacer(minLength: 0)
+            }
+            // Retry only applies to streaming meal-plan recipes — cookbook
+            // recipes are already fully resolved on the server.
+            if case .mealPlanDay(let day) = source {
+                Button {
+                    Task { await streamGenerate(dayId: day.id) }
+                } label: {
+                    HStack(spacing: 6) {
+                        SCIcon("sparkle", size: 14, color: .white)
+                        Text("Try again").font(Theme.sans(13, weight: .semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .frame(height: 36)
+                    .background(Theme.terra)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+                .disabled(isStreaming)
+            }
         }
         .padding(14)
         .background(Theme.card)
@@ -264,12 +301,41 @@ struct RecipeScreen: View {
             HStack(spacing: 8) {
                 heroButton(saved ? "bookmarkF" : "bookmark",
                            color: saved ? Theme.terra : Theme.ink) {
-                    withAnimation { saved.toggle() }
+                    Task { await saveToCookbook() }
                 }
-                heroButton("photo")
+                .disabled(isSaving || saved || content.isEmpty || isStreaming)
+                .opacity(content.isEmpty || isStreaming ? 0.6 : 1)
             }
         }
         .padding(.horizontal, 14)
+    }
+
+    /// Persist the current recipe to the cookbook via
+    /// `POST /api/kitchen/cookbook`. Only the meal-plan-day source path can
+    /// actually trigger this — cookbook recipes start `saved == true` so the
+    /// button is disabled, and the `.disabled` modifier above also blocks
+    /// re-saves while one is in flight or while a stream is still running.
+    @MainActor
+    private func saveToCookbook() async {
+        guard !saved, !content.isEmpty, !isSaving else { return }
+        isSaving = true
+        saveError = nil
+        struct Body: Encodable {
+            let title: String
+            let content: String
+            let imagePrompt: String?
+        }
+        let body = Body(title: title, content: content, imagePrompt: imagePrompt)
+        do {
+            let _: CookbookRecipe = try await client.post("/api/kitchen/cookbook", body)
+            withAnimation { saved = true }
+        } catch let e as APIError where e.isBenignCancellation {
+            // No-op — the view went away mid-save.
+        } catch {
+            saveError = error.localizedDescription
+            errorMessage = "Couldn't save: \(error.localizedDescription)"
+        }
+        isSaving = false
     }
 
     private func heroButton(_ icon: String,

@@ -13,6 +13,30 @@ process. Implementation-level bug fixes belong in commit messages, not here.
 
 ---
 
+## 2026-05-23 — Contract: added `save_recipe` as the fourth main-chat tool
+
+**Changed:** The contract (`contract/ai-behavior.md`) now lists **four**
+function tools for the main chat instead of three. The new one is
+`save_recipe` — the model can persist the recipe it just generated to
+`cookbook_recipes` when the user asks to save.
+
+**Why:** the port pulled the tool list verbatim from the Replit web app,
+which never had a save-recipe tool. The chat handles "save this" by
+having the model write a confirmation reply ("Got it! I've saved…"),
+but nothing actually persists. Real-device testing surfaced the gap
+immediately: the chat lies about saving, then the Cookbook tab shows
+empty. Adding a real tool is a strict expansion of behavior — no
+existing flow changes — so it goes into the contract rather than
+sitting in a backend-only patch.
+
+The `POST /api/kitchen/cookbook` route already existed and worked; the
+only thing missing was an in-chat caller for it. Adding the tool also
+lets the model write its own image prompt for the saved recipe (the
+schema accepts an optional `imagePrompt`), which lines up with how
+meal-plan recipe generation already emits one.
+
+---
+
 ## 2026-05-23 — Sign in with Apple deferred; email auth is the dev path
 
 **Changed:** Decision D1 set Sign in with Apple as the primary sign-in

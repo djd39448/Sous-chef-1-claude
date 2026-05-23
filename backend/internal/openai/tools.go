@@ -2,7 +2,7 @@ package openai
 
 import "encoding/json"
 
-// ChatTools returns the three function tools offered during the main kitchen
+// ChatTools returns the four function tools offered during the main kitchen
 // chat. The parameter schemas are verbatim from contract/ai-behavior.md.
 func ChatTools() []Tool {
 	return []Tool{
@@ -20,6 +20,11 @@ func ChatTools() []Tool {
 			Name:        "create_shopping_list",
 			Description: "Create a shopping list using CFO format. Items will be derived views of canonical food objects.",
 			Parameters:  json.RawMessage(createShoppingListSchema),
+		}},
+		{Type: "function", Function: ToolFunction{
+			Name:        "save_recipe",
+			Description: "Save a recipe to the user's cookbook so it lands on the Cookbook tab. Call when the user asks to save the recipe you just generated (e.g., 'save this', 'save it to my cookbook'). Pass the exact title and the full markdown body.",
+			Parameters:  json.RawMessage(saveRecipeSchema),
 		}},
 	}
 }
@@ -117,4 +122,14 @@ const updateMealSchema = `{
     "notes": { "type": "string", "description": "Brief notes about the meal (cook time, etc.)" }
   },
   "required": ["mealName"]
+}`
+
+const saveRecipeSchema = `{
+  "type": "object",
+  "properties": {
+    "title":       { "type": "string", "description": "Recipe title — exactly as it appears in the recipe heading, without the leading '# '." },
+    "content":     { "type": "string", "description": "Full recipe in markdown: description, Prep/Cook/Serves line, Ingredients, Instructions, optional Tips. Do not wrap in code fences." },
+    "imagePrompt": { "type": "string", "description": "Optional one-sentence image-generation prompt for the dish photo." }
+  },
+  "required": ["title","content"]
 }`

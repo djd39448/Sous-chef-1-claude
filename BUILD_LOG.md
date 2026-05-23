@@ -547,3 +547,73 @@ isn't in the correct format." Two bugs unwound:
 Verified: `xcodebuild iphonesimulator` clean, and a standalone Swift
 script confirmed all six common timestamp formats parse correctly
 (including Go's max-precision 9-digit nanos).
+
+---
+
+## 2026-05-23 · Fix: cancellation noise + silent empty recipe
+
+Two follow-on bugs Dave caught: Cookbook flashing
+"Couldn't load your cookbook. Network error: cancelled" on a tab
+swap, and Recipe sometimes finishing the stream with no content and
+no way to retry ("No recipe content yet").
+
+Cancellation: SwiftUI re-fires `.task { … }` whenever the view
+identity flips (tab swap, navigation push), which tears down the
+in-flight `URLSession.data(for:)` with `URLError.cancelled` (-999).
+The previous catch was surfacing that as a red error card. Added a
+typed `.cancelled` case to `APIError` plus an `isBenignCancellation`
+flag, mapped `URLError.cancelled` to it in both `rawRequest` and the
+SSE `stream` paths, and updated every screen's `load()` (and
+`ChatScreen.send()`) to `return` silently for benign cancellations
+instead of writing them to the load state. The streaming path also
+finishes the AsyncThrowingStream without an error so the consumer
+just sees a clean end.
+
+Empty recipe: when the OpenAI stream completes with no
+`{content:…}` chunks (model hiccup, immediate `{done:…}`, etc.),
+`streamGenerate` now sets a "try again" message and the recipe
+error card grew a `Try again` button that re-runs the stream
+(only for `.mealPlanDay` source — cookbook recipes are already
+materialized). RecipeScreen's catch now also silences benign
+cancellation the same way.
+
+Verified: `xcodebuild iphonesimulator` clean, zero warnings.
+
+---
+
+## 2026-05-23 · Audit + first bug pass: save-recipe wired end-to-end
+
+Dave drove the simulator and produced a comprehensive bug list
+(`BUGS.md` — 22 findings, P0/P1/P2). The single worst finding was a
+**trust violation**: the chat assistant claimed to save recipes ("Got
+it! I've saved the Spicy Korean Beef recipe…") but the Cookbook tab
+was empty. Root cause: the `save_recipe` tool simply didn't exist in
+the OpenAI tool catalog. The model was hallucinating tool use.
+
+Fix (this commit) covers both halves of the broken save flow — B-01
+(chat tool) and B-02 (Recipe screen bookmark button):
+
+- **Contract first** (`contract/ai-behavior.md`): added `save_recipe`
+  as the fourth main-chat tool. Title + content + optional
+  imagePrompt; server inserts a `cookbook_recipes` row. Bumped the
+  tool count in the models table and added a "4. SAVE RECIPE" clause
+  to the system prompt so the model knows when to call it.
+
+- **Backend** (`backend/internal/openai/tools.go`,
+  `backend/internal/api/tools.go`): registered the tool with its
+  JSON schema and added `toolSaveRecipe` which calls
+  `store.CreateCookbookRecipe` (the HTTP route handler was already
+  in place — we just had no in-stream caller). Silently no-ops when
+  title or content is blank, per the contract.
+
+- **iOS** (`ios/SousChef/Screens/RecipeScreen.swift`): the bookmark
+  button now calls `POST /api/kitchen/cookbook` (via the existing
+  `APIClient.post`) instead of just flipping a local `@State`. Adds
+  an `isSaving` lock, disables the button while a request is in
+  flight or while the stream is running, and pre-fills
+  `saved == true` when the source is already a cookbook recipe so
+  the icon reflects reality. Errors surface in the existing recipe
+  error card.
+
+Verified: `go build ./...` and `xcodebuild iphonesimulator` both
+clean, zero warnings.

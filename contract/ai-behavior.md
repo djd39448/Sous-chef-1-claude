@@ -12,7 +12,7 @@ went through Replit's proxy; that base URL is dropped.
 
 | Use | Model | Parameters |
 |---|---|---|
-| Main chat | `gpt-4.1` | `tools` (3, below), `tool_choice: auto`, `stream: true`, `max_completion_tokens: 2048` |
+| Main chat | `gpt-4.1` | `tools` (4, below), `tool_choice: auto`, `stream: true`, `max_completion_tokens: 2048` |
 | Recipe generation | `gpt-4.1` | `stream: true` |
 | Recipe chat | `gpt-4.1` | `tools` (`update_meal`), `stream: true` |
 | Meal-plan generation | `gpt-4.1` | `temperature: 0.9`, `response_format: {type:"json_object"}`, `max_completion_tokens: 1024` |
@@ -107,6 +107,8 @@ IMPORTANT - WHEN TO USE YOUR TOOLS:
 
 3. CREATE SHOPPING LIST: Call create_shopping_list when user asks for a shopping list or to "make a list". Use standard categories and lowercase ingredient names.
 
+4. SAVE RECIPE: Call save_recipe when the user asks to save the recipe you just generated (e.g., "save this", "save it to my cookbook", "remember this one"). Pass the recipe's exact title and the full markdown body (description through Tips) that you just produced. Do not invent a save unless the user actually asked.
+
 When suggesting meals:
 - Prioritize ingredients the user has mentioned
 - Default to 30-minute or less recipes unless asked otherwise
@@ -129,7 +131,7 @@ Remember: You're here to make dinner decisions FASTER than thinking. Be helpful,
 
 ### Tools
 
-Three function tools. JSON Schema verbatim.
+Four function tools. JSON Schema verbatim.
 
 #### `update_ingredients`
 > Update the user's ingredient inventory when they mention having ingredients.
@@ -244,6 +246,29 @@ shopping list (`name: "Shopping List"`, current week, linked to that plan). For
 each item: upsert a `food_items` CFO with `usage_context.role = "shopping"` and
 `shopping_list_id` set; also insert a `shopping_list_items` row
 (`name = display_name || canonical_name`, `quantity = "<amount> <unit>"` or null).
+
+#### `save_recipe`
+> Save a recipe to the user's cookbook so it lands on the Cookbook tab. Call
+> this when the user asks to save the recipe you just generated. Pass the exact
+> title and the full markdown body.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "title": { "type": "string", "description": "Recipe title — exactly as it appears in the recipe heading, without the leading '# '." },
+    "content": { "type": "string", "description": "Full recipe in markdown: description, Prep/Cook/Serves line, Ingredients, Instructions, optional Tips. Do not wrap in code fences." },
+    "imagePrompt": { "type": "string", "description": "Optional one-sentence image-generation prompt for the dish photo." }
+  },
+  "required": ["title", "content"]
+}
+```
+
+**Server-side handling:** insert a `cookbook_recipes` row (`user_id`, `title`,
+`content`, optional `image_prompt`). The row immediately appears in
+`GET /api/kitchen/cookbook` and on the Cookbook tab. No-op silently if title
+or content is blank (the model occasionally calls the tool without an
+in-progress recipe — drop those rather than 400 the stream).
 
 > Tool results are **not** streamed to the client. The model's tool calls are
 > executed silently; the client refetches resources after the stream ends.

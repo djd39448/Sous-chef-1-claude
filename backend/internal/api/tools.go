@@ -21,6 +21,8 @@ func (s *Server) executeChatTool(ctx context.Context, userID string, tc openai.T
 		return s.toolCreateMealPlan(ctx, userID, tc.Arguments)
 	case "create_shopping_list":
 		return s.toolCreateShoppingList(ctx, userID, tc.Arguments)
+	case "save_recipe":
+		return s.toolSaveRecipe(ctx, userID, tc.Arguments)
 	default:
 		return nil
 	}
@@ -236,4 +238,31 @@ func (s *Server) toolCreateShoppingList(ctx context.Context, userID, args string
 		}
 	}
 	return nil
+}
+
+// toolSaveRecipe handles the save_recipe tool: it inserts a cookbook_recipes
+// row so the recipe lands on the Cookbook tab. Per the contract we silently
+// no-op when title or content is blank — the model occasionally tries to call
+// the tool without an in-progress recipe, and we'd rather drop those than
+// abort the whole assistant turn.
+func (s *Server) toolSaveRecipe(ctx context.Context, userID, args string) error {
+	var p struct {
+		Title       string `json:"title"`
+		Content     string `json:"content"`
+		ImagePrompt string `json:"imagePrompt"`
+	}
+	if err := json.Unmarshal([]byte(args), &p); err != nil {
+		return err
+	}
+	title := strings.TrimSpace(p.Title)
+	content := strings.TrimSpace(p.Content)
+	if title == "" || content == "" {
+		return nil
+	}
+	var imagePrompt *string
+	if ip := strings.TrimSpace(p.ImagePrompt); ip != "" {
+		imagePrompt = &ip
+	}
+	_, err := s.store.CreateCookbookRecipe(ctx, userID, title, content, imagePrompt)
+	return err
 }
