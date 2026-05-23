@@ -13,6 +13,23 @@ process. Implementation-level bug fixes belong in commit messages, not here.
 
 ---
 
+## 2026-05-22 — Supabase project uses asymmetric JWT signing keys
+
+**Changed:** the Sous Chef Supabase project was provisioned with Supabase's
+new asymmetric JWT signing-key format — its API keys are
+`sb_publishable_…` and `sb_secret_…`, and Auth-issued JWTs are signed with
+an asymmetric key pair (ES256 or RS256). The backend's auth middleware
+(`backend/internal/auth/auth.go`) currently verifies HS256 against a
+shared `SUPABASE_JWT_SECRET`, which does not work against asymmetric tokens.
+**Why:** new Supabase projects default to the new format; the legacy
+HS256 shared secret is being deprecated. The forward-compatible fix is to
+verify via the project's JWKS endpoint
+(`https://<ref>.supabase.co/auth/v1/.well-known/jwks.json`) — fetch the
+keys, cache them, look up by `kid` from the token header, verify with the
+public key. `backend/.env` carries a placeholder `SUPABASE_JWT_SECRET` so
+the server boots and `/healthz` works; the JWKS update is the next backend
+change (tracked as a task).
+
 ## 2026-05-22 — Phase 4 typeface: Fraunces → system serif
 
 **Changed:** the design prototype calls for Fraunces (a Google variable font)

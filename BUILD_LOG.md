@@ -147,3 +147,35 @@ Committed: `5a1e30b` (21 files, +2524) plus `d5b5fff` for the SignIn fix.
 
 Phases 5 (deploy + on-device) and the backend end-to-end verification remain
 — both gated on the Supabase project, OpenAI key, and an AWS account.
+
+---
+
+## 2026-05-22 · Backend end-to-end: first Supabase connection ✅ (partial)
+
+The Sous Chef Supabase project was provisioned and its values landed in a
+local note; they were transcribed into `backend/.env` (gitignored). The
+project ref is `hssqzhwtwpvblfdmqzpw`. A first screenshot pass had a
+two-character OCR error (`a`↔`q` in the ref, `l`↔`I` in the publishable
+key), caught when Dave pasted the Supabase Next.js quickstart values back
+verbatim.
+
+- **Schema applied.** `go run ./cmd/migrate ../supabase/migrations` ran both
+  `20260522000000_initial_schema.sql` and `20260522000100_rls_policies.sql`
+  against the live Supabase database — 11 tables, the CFO identity unique
+  index, the per-week unique indexes for plans and shopping lists, the
+  `set_updated_at` and `handle_new_user` triggers, and RLS enabled on every
+  table.
+- **Server boots and connects.** `go run ./cmd/server` started, `pgx`'s
+  `pool.Ping` succeeded, the server listened on `:8080`.
+- **`/healthz` → 200 ok.** Unauthenticated probe passes.
+- **JWT middleware gate works.** `GET /api/auth/user` without a token →
+  `401 {"error":"unauthorized"}`.
+
+Still pending — the *verification* part of the task:
+- **JWKS auth update** (CHANGE_LOG: asymmetric JWT signing keys). The
+  current HS256 middleware can't verify the project's asymmetric tokens —
+  `SUPABASE_JWT_SECRET` is a placeholder so the server boots, but no real
+  Supabase Auth token will validate against it. Next backend change.
+- **OpenAI call** — not yet exercised. (Also: the OpenAI key was
+  transcribed from a screenshot and likely has a similar `I`/`l` error;
+  Dave to verify.)
