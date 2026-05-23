@@ -199,7 +199,7 @@ struct HomeScreen: View {
             Rectangle()
                 .fill(Theme.elev)
                 .aspectRatio(16.0 / 10.0, contentMode: .fit)
-                .overlay { FoodImage(url: imageURL(for: meal.mealName)) }
+                .overlay { FoodImage(url: ImageLookup.url(for: meal.mealName)) }
                 .clipped()
                 .overlay(alignment: .topLeading) {
                     Text("TONIGHT'S DINNER")
@@ -443,23 +443,6 @@ struct HomeScreen: View {
         .padding(.bottom, 24)
     }
 
-    // MARK: Image lookup for a meal name (rough — until the AI photo is wired)
-
-    private func imageURL(for mealName: String) -> String {
-        let lower = mealName.lowercased()
-        if lower.contains("carbonara") || lower.contains("pasta") { return Food.carbonara }
-        if lower.contains("salmon") { return Food.salmon }
-        if lower.contains("taco")    { return Food.tacos }
-        if lower.contains("stir")    { return Food.stirfry }
-        if lower.contains("pizza")   { return Food.pizza }
-        if lower.contains("soup")    { return Food.soup }
-        if lower.contains("rib")     { return Food.ribs }
-        if lower.contains("curry")   { return Food.curry }
-        if lower.contains("roast")   { return Food.roast }
-        if lower.contains("salad")   { return Food.salad }
-        if lower.contains("chicken") { return Food.chicken }
-        return Food.carbonara
-    }
 }
 
 /// A simple flow layout — lays children left-to-right, wrapping to new rows.

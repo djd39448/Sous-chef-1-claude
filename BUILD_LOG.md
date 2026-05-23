@@ -348,3 +348,46 @@ Known follow-ups (small):
   UI (and 401-as-signout in APIClient) is the next polish pass.
 - Chat shortcut and pantry sections still on mock content — wired when
   we hit `/api/kitchen/ingredients` and the chat endpoints.
+
+---
+
+## 2026-05-23 · Plan, Cookbook, Shopping wired to live data ✅
+
+Continuing the screen-by-screen wire-up. Three more screens now read
+(and one mutates) live data — Home + these are the full read/write
+CRUD surface for the app, minus the SSE flows (Chat, Recipe generate).
+
+- Added DTOs: `CookbookRecipe`, `ShoppingItem`, `ShoppingListWithItems`.
+- New helpers, both used by Home and Plan (and beyond):
+  - `Helpers/DateUtil.swift` — `weekRangeString`, `dayName`,
+    `dayNumber(for:weekStart:)`, `todaysMondayString`. All UTC, matching
+    the backend's `getWeekStartDate()` so string comparison works.
+  - `Helpers/ImageLookup.swift` — meal-name → `Food.*` URL fallback,
+    pulled out of HomeScreen for reuse.
+
+- **PlanScreen** — fetches `GET /api/kitchen/meal-plan`. Header range
+  derives from the plan's `weekStartDate` (with " · This week" suffix
+  when it matches the current Monday). Meal rows show day name + date
+  number + meal + notes + photo; today's row is highlighted by
+  `dayOfWeek` match. Loading skeleton, "Plan my week" empty card that
+  routes to chat, error card with retry.
+
+- **CookbookScreen** — fetches `GET /api/kitchen/cookbook`. The most
+  recently saved recipe heads the featured "Last saved" card; 2-column
+  grid follows. Filter chips remain mock (no tag/category field in the
+  contract yet). Loading skeleton, empty card, error card with retry.
+
+- **ShoppingScreen** — fetches `GET /api/kitchen/shopping-list`. Items
+  group by category (produce / meat / seafood / dairy / bakery /
+  frozen / pantry / beverages / other, then any extras the server
+  emits). Tapping a row toggles `checked` *optimistically* and
+  `PATCH`es to `/api/kitchen/shopping-item/{id}`; reverts the local
+  change if the request fails. "Clear checked" hits
+  `DELETE /api/kitchen/shopping-items/checked` with the same optimistic
+  pattern. The progress bar reflects the live `checked / total` count.
+
+Verified: `xcodebuild iphonesimulator` clean, no warnings.
+
+Still on mock content: Calendar (placeholder days), Recipe detail
+(the SSE generate flow), Chat (SSE messages), and HomeScreen's pantry
++ chat-shortcut sections.

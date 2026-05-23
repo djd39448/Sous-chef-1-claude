@@ -43,3 +43,35 @@ struct MealPlanWithDays: Codable, Identifiable {
     let updatedAt: Date
     let days: [MealPlanDay]
 }
+
+/// `GET /api/kitchen/cookbook[/{id}]` — a saved recipe.
+struct CookbookRecipe: Codable, Identifiable {
+    let id: Int
+    let userId: String
+    let title: String
+    let content: String
+    let imagePrompt: String?
+    let createdAt: Date
+}
+
+/// One item on a shopping list. `checked` is `0`/`1` (preserved from the
+/// original schema; see contract data-model.md, Decision D3).
+struct ShoppingItem: Codable, Identifiable {
+    let id: Int
+    let shoppingListId: Int
+    let name: String
+    let quantity: String?
+    let category: String
+    var checked: Int
+}
+
+/// `GET /api/kitchen/shopping-list` — the user's most recent list, with items.
+struct ShoppingListWithItems: Codable, Identifiable {
+    let id: Int
+    let userId: String
+    let name: String
+    let weekStartDate: String?
+    let mealPlanId: Int?
+    let createdAt: Date
+    var items: [ShoppingItem]
+}
