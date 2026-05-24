@@ -102,7 +102,7 @@ struct MainView: View {
 struct TabBarClearance: ViewModifier {
     func body(content: Content) -> some View {
         content.safeAreaInset(edge: .bottom, spacing: 0) {
-            Color.clear.frame(height: 32)
+            Color.clear.frame(height: 64)
         }
     }
 }
