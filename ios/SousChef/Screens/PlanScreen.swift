@@ -234,6 +234,60 @@ struct PlanScreen: View {
 
     // MARK: Loaded rows
 
+    /// The "This Week's Dinners / New Plan" header that sits above the
+    /// meal rows. The New Plan button is the original web app's
+    /// regenerate-everything affordance: tap it to delete the current
+    /// week's plan and replace it with a fresh one (calls
+    /// `/api/kitchen/generate-meal-plan`). This is the "edit the plan
+    /// as a whole" workflow — per-meal swaps still happen in the
+    /// recipe chat sheet.
+    private var newPlanHeader: some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(isCurrentWeek ? "This Week's Dinners" : "Week of \(shortMonthDay(currentWeek))")
+                    .font(Theme.display(18, weight: .medium))
+                    .foregroundStyle(Theme.ink)
+                Text("Tap a day to view recipe — or get a new plan")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.ink3)
+            }
+            Spacer()
+            Button { Task { await generatePlan() } } label: {
+                HStack(spacing: 6) {
+                    if isGenerating {
+                        ProgressView().tint(Theme.ink)
+                    } else {
+                        SCIcon("swap", size: 14, color: Theme.ink)
+                    }
+                    Text(isGenerating ? "Creating…" : "New Plan")
+                        .font(Theme.sans(13, weight: .semibold))
+                        .foregroundStyle(Theme.ink)
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 32)
+                .background(Theme.card)
+                .clipShape(Capsule())
+                .overlay(Capsule().strokeBorder(Theme.hairline2, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .disabled(isGenerating)
+        }
+        .padding(.bottom, 6)
+    }
+
+    private var isCurrentWeek: Bool {
+        currentWeek == DateUtil.todaysMondayString()
+    }
+
+    /// "May 25" — short month + day, used in the "Week of …" header.
+    private func shortMonthDay(_ iso: String) -> String {
+        guard let d = DateUtil.dateFromISO(iso) else { return iso }
+        let f = DateFormatter()
+        f.dateFormat = "MMM d"
+        f.timeZone = DateUtil.utc.timeZone
+        return f.string(from: d)
+    }
+
     /// Plan days sorted Monday-first (Sunday last) — the display order.
     private func sortedDays(_ plan: MealPlanWithDays) -> [MealPlanDay] {
         plan.days.sorted { lhs, rhs in
@@ -246,6 +300,7 @@ struct PlanScreen: View {
     private func mealRows(plan: MealPlanWithDays) -> some View {
         let today = Calendar.current.component(.weekday, from: Date()) - 1  // 0..6
         return VStack(spacing: 10) {
+            newPlanHeader
             ForEach(sortedDays(plan)) { day in
                 Button { openRecipe(.mealPlanDay(day)) } label: {
                     mealRow(day: day, isToday: day.dayOfWeek == today, plan: plan)

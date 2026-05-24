@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 )
 
 const (
@@ -27,10 +26,20 @@ type Client struct {
 }
 
 // New returns a client authenticated with the given API key.
+//
+// The HTTP client has NO overall request timeout — that's intentional.
+// `Timeout` on `http.Client` is "the whole request, including reading
+// the response body," which is fatal for streaming completions: it
+// kills the SSE connection mid-stream and from the iOS client's view
+// the stream just ends cleanly with empty content, producing the
+// "The recipe didn't come through" placeholder. Cancellation is
+// handled per-request via the caller's `context.Context` (which
+// derives from the inbound HTTP request — when the iOS client
+// disconnects, the OpenAI request cancels too).
 func New(apiKey string) *Client {
 	return &Client{
 		apiKey: apiKey,
-		http:   &http.Client{Timeout: 3 * time.Minute},
+		http:   &http.Client{Timeout: 0},
 	}
 }
 
@@ -255,12 +264,19 @@ func (c *Client) ChatJSON(ctx context.Context, p ChatParams) (string, error) {
 
 // GenerateImage creates one 1024x1024 image with gpt-image-1 and returns it
 // base64-encoded (PNG).
+//
+// `quality: "low"` is the speed knob — `gpt-image-1` at low quality
+// returns in ~6-10s where `high` quality takes ~30-60s. Recipe-hero
+// photography doesn't need print quality, and the low setting still
+// produces convincing food shots. Bump to "medium" or "high" later
+// if Dave wants better-looking images at the cost of latency.
 func (c *Client) GenerateImage(ctx context.Context, prompt string) (string, error) {
 	body := map[string]any{
-		"model":  "gpt-image-1",
-		"prompt": prompt,
-		"n":      1,
-		"size":   "1024x1024",
+		"model":   "gpt-image-1",
+		"prompt":  prompt,
+		"n":       1,
+		"size":    "1024x1024",
+		"quality": "low",
 	}
 
 	resp, err := c.post(ctx, imageURL, body)
