@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/rand/v2"
 	"net/http"
@@ -201,6 +202,220 @@ func (s *Server) handleGenerateMealPlan(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, full)
+}
+
+// handleRegenerateDays serves POST /api/kitchen/regenerate-days.
+//
+// Body: `{ weekStartDate, daysToRegenerate: [int] }`. `daysToRegenerate`
+// is the list of `dayOfWeek` values (0=Sun…6=Sat) the user wants the AI
+// to replace; days NOT in the list are kept as-is. The AI is told
+// which existing meals to avoid (so it doesn't repeat them) and which
+// days to fill. Each replaced day's meal name + notes get the new
+// values, and `recipe_content` + `recipe_image_prompt` + `image_url`
+// are cleared because they described the OLD dish.
+//
+// Returns the updated `MealPlanWithDays`.
+func (s *Server) handleRegenerateDays(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	userID := auth.UserID(ctx)
+
+	var body struct {
+		WeekStartDate     string `json:"weekStartDate"`
+		DaysToRegenerate  []int  `json:"daysToRegenerate"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	week := strings.TrimSpace(body.WeekStartDate)
+	if week == "" || len(body.DaysToRegenerate) == 0 {
+		writeError(w, http.StatusBadRequest,
+			"weekStartDate and daysToRegenerate are required")
+		return
+	}
+	if _, err := time.Parse("2006-01-02", week); err != nil {
+		writeError(w, http.StatusBadRequest, "weekStartDate must be YYYY-MM-DD")
+		return
+	}
+
+	// Build a quick lookup of which days to replace + sanity-clamp values.
+	target := map[int]bool{}
+	for _, d := range body.DaysToRegenerate {
+		if d >= 0 && d <= 6 {
+			target[d] = true
+		}
+	}
+	if len(target) == 0 {
+		writeError(w, http.StatusBadRequest,
+			"daysToRegenerate must contain at least one valid dayOfWeek (0..6)")
+		return
+	}
+
+	// Load the existing plan so we can (a) preserve untouched days and
+	// (b) tell the model which meals to avoid duplicating.
+	plan, err := s.store.GetMealPlanByWeek(ctx, userID, week)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "no meal plan for this week")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	full, err := s.store.GetMealPlanWithDays(ctx, plan)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// Anything to actually replace? If the user checked every day there
+	// might be nothing to do — just return the plan unchanged.
+	var kept []store.MealPlanDay
+	for _, d := range full.Days {
+		if !target[d.DayOfWeek] {
+			kept = append(kept, d)
+		}
+	}
+	if len(kept) == len(full.Days) {
+		writeJSON(w, http.StatusOK, full)
+		return
+	}
+
+	// Ask the AI for new meals for just the target days.
+	ingredients, _ := s.store.GetIngredientMemory(ctx, userID)
+	cookbook, _ := s.store.ListCookbook(ctx, userID)
+	newMeals := s.generateMealsForDays(ctx, body.DaysToRegenerate, kept, ingredients, cookbook)
+
+	// Update each target day's row. Map by dayOfWeek so we hit the right
+	// row even if the AI orders them differently.
+	dayByOfWeek := map[int]store.MealPlanDay{}
+	for _, d := range full.Days {
+		dayByOfWeek[d.DayOfWeek] = d
+	}
+	for _, m := range newMeals {
+		if !target[m.DayOfWeek] {
+			continue
+		}
+		row, ok := dayByOfWeek[m.DayOfWeek]
+		if !ok {
+			continue
+		}
+		if err := s.store.UpdateMealPlanDayMeal(ctx, row.ID, m.MealName, m.Notes); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+
+	// Return the fresh plan so the iOS client can swap state in one shot.
+	plan2, err := s.store.GetMealPlanByWeek(ctx, userID, week)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	out, err := s.store.GetMealPlanWithDays(ctx, plan2)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// generateMealsForDays asks the model for new meals targeting a subset
+// of the week's days. Mirrors the structure of generateMealPlanMeals
+// but adds an `avoidMeals` list (meals already in the plan that we're
+// keeping) and a tight day-selection prompt. Returns nil on any
+// failure; caller falls back to fallback meals for those days.
+func (s *Server) generateMealsForDays(
+	ctx context.Context,
+	daysToRegenerate []int,
+	keptDays []store.MealPlanDay,
+	ingredients []store.Ingredient,
+	cookbook []store.CookbookRecipe,
+) []store.MealInput {
+	dayNamesIdx := []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
+	dayNames := make([]string, 0, len(daysToRegenerate))
+	for _, d := range daysToRegenerate {
+		if d >= 0 && d <= 6 {
+			dayNames = append(dayNames, dayNamesIdx[d])
+		}
+	}
+
+	ingredientList := "common pantry items"
+	if names := ingredientNames(ingredients); len(names) > 0 {
+		ingredientList = strings.Join(names, ", ")
+	}
+
+	cookbookCtx := buildMealPlanCookbookContext(cookbook)
+
+	// "Avoid these meals" — names of the days the user is keeping, so
+	// the model doesn't re-suggest the same dishes.
+	avoid := make([]string, 0, len(keptDays))
+	for _, d := range keptDays {
+		if n := strings.TrimSpace(d.MealName); n != "" {
+			avoid = append(avoid, n)
+		}
+	}
+	avoidLine := ""
+	if len(avoid) > 0 {
+		avoidLine = "Avoid these meals (already planned): " + strings.Join(avoid, ", ") + "."
+	}
+
+	// Day-of-week numbers in the prompt so the model can echo them back.
+	daysCSV := intsToCSV(daysToRegenerate)
+
+	system := "You are a creative meal planning assistant. " +
+		"Generate new dinner suggestions for specific days only. " +
+		cookbookCtx + " " + avoidLine + "\n\n" +
+		"IMPORTANT: respond with valid JSON containing a \"meals\" array."
+	user := "Generate new UNIQUE dinner suggestions for these days only: " +
+		strings.Join(dayNames, ", ") + ".\n\n" +
+		"This week, lean toward " +
+		mealPlanCuisines[rand.IntN(len(mealPlanCuisines))] +
+		" influences with " + seasonalFocus(time.Now().UTC()) + " dishes. " +
+		"Available ingredients: " + ingredientList + ".\n\n" +
+		"Be creative — different from anything already planned.\n\n" +
+		"Return JSON in this exact format:\n" +
+		"{ \"meals\": [ { \"dayOfWeek\": <number>, \"mealName\": \"…\", \"notes\": \"…\" } ] }\n\n" +
+		"Where dayOfWeek is 0=Sunday … 6=Saturday. " +
+		"Only include the days I asked for: " + daysCSV + "."
+
+	temperature := 0.95
+	maxTokens := 512
+	content, err := s.ai.ChatJSON(ctx, openai.ChatParams{
+		Model: "gpt-4.1",
+		Messages: []openai.Message{
+			{Role: "system", Content: system},
+			{Role: "user", Content: user},
+		},
+		Temperature:         &temperature,
+		MaxCompletionTokens: &maxTokens,
+	})
+	if err != nil {
+		return nil
+	}
+	all := parseMealPlanJSON(content)
+	// Filter to just the days the caller wanted — the model occasionally
+	// includes extras.
+	want := map[int]bool{}
+	for _, d := range daysToRegenerate {
+		want[d] = true
+	}
+	out := make([]store.MealInput, 0, len(all))
+	for _, m := range all {
+		if want[m.DayOfWeek] {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// intsToCSV — small helper used in the regenerate-days prompt.
+func intsToCSV(xs []int) string {
+	parts := make([]string, 0, len(xs))
+	for _, x := range xs {
+		parts = append(parts, fmt.Sprintf("%d", x))
+	}
+	return strings.Join(parts, ", ")
 }
 
 var mealPlanCuisines = []string{

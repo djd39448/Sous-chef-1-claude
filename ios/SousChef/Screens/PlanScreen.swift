@@ -18,6 +18,18 @@ struct PlanScreen: View {
     @State private var currentWeek: String = DateUtil.todaysMondayString()
     @State private var isGenerating = false
 
+    /// True while the user is in "check the meals to keep, regenerate
+    /// the rest" mode. Toggled by the Edit Plan / Cancel button above
+    /// the meal list. Resets when the week changes.
+    @State private var isEditMode = false
+    /// Set of meal-plan-day ids the user has *approved* (checked) in
+    /// edit mode — these are the meals to KEEP. Unchecked days are
+    /// what `/regenerate-days` replaces.
+    @State private var approvedDayIds: Set<Int> = []
+    /// True while `/regenerate-days` is in flight — drives the button
+    /// spinner and disables both Regenerate and Finalize.
+    @State private var isRegeneratingDays = false
+
     private enum LoadState {
         case loading
         case loaded(plan: MealPlanWithDays?)
@@ -129,6 +141,9 @@ struct PlanScreen: View {
 
     private func shiftWeek(_ delta: Int) {
         currentWeek = DateUtil.shiftMonday(currentWeek, weeks: delta)
+        // Edit mode is per-week — leaving the week aborts the in-progress
+        // keep/regenerate selection.
+        exitEditMode()
         Task { await load() }
     }
 
@@ -234,45 +249,52 @@ struct PlanScreen: View {
 
     // MARK: Loaded rows
 
-    /// The "This Week's Dinners / New Plan" header that sits above the
-    /// meal rows. The New Plan button is the original web app's
-    /// regenerate-everything affordance: tap it to delete the current
-    /// week's plan and replace it with a fresh one (calls
-    /// `/api/kitchen/generate-meal-plan`). This is the "edit the plan
-    /// as a whole" workflow — per-meal swaps still happen in the
-    /// recipe chat sheet.
-    private var newPlanHeader: some View {
+    /// The header above the meal list. In normal mode shows "Tap a day
+    /// to view recipe" with an Edit Plan button. In edit mode shows
+    /// the keep-some-regenerate-rest instructions and a Cancel button.
+    /// Mirrors the original web app's plan view exactly.
+    private var planListHeader: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(isCurrentWeek ? "This Week's Dinners" : "Week of \(shortMonthDay(currentWeek))")
                     .font(Theme.display(18, weight: .medium))
                     .foregroundStyle(Theme.ink)
-                Text("Tap a day to view recipe — or get a new plan")
+                Text(isEditMode
+                     ? "Check meals you want to keep, regenerate the rest"
+                     : "Tap a day to view recipe")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.ink3)
+                    .lineLimit(2)
             }
             Spacer()
-            Button { Task { await generatePlan() } } label: {
-                HStack(spacing: 6) {
-                    if isGenerating {
-                        ProgressView().tint(Theme.ink)
-                    } else {
-                        SCIcon("swap", size: 14, color: Theme.ink)
-                    }
-                    Text(isGenerating ? "Creating…" : "New Plan")
-                        .font(Theme.sans(13, weight: .semibold))
-                        .foregroundStyle(Theme.ink)
+            Button {
+                if isEditMode {
+                    exitEditMode()
+                } else {
+                    isEditMode = true
+                    approvedDayIds = []
                 }
-                .padding(.horizontal, 12)
-                .frame(height: 32)
-                .background(Theme.card)
-                .clipShape(Capsule())
-                .overlay(Capsule().strokeBorder(Theme.hairline2, lineWidth: 1))
+            } label: {
+                Text(isEditMode ? "Cancel" : "Edit Plan")
+                    .font(Theme.sans(13, weight: .semibold))
+                    .foregroundStyle(isEditMode ? Theme.ink2 : Theme.ink)
+                    .padding(.horizontal, 12)
+                    .frame(height: 32)
+                    .background(isEditMode ? Color.clear : Theme.card)
+                    .clipShape(Capsule())
+                    .overlay(Capsule().strokeBorder(
+                        isEditMode ? Color.clear : Theme.hairline2,
+                        lineWidth: 1))
             }
             .buttonStyle(.plain)
-            .disabled(isGenerating)
+            .disabled(isRegeneratingDays)
         }
         .padding(.bottom, 6)
+    }
+
+    private func exitEditMode() {
+        isEditMode = false
+        approvedDayIds = []
     }
 
     private var isCurrentWeek: Bool {
@@ -299,20 +321,127 @@ struct PlanScreen: View {
 
     private func mealRows(plan: MealPlanWithDays) -> some View {
         let today = Calendar.current.component(.weekday, from: Date()) - 1  // 0..6
+        let allDays = sortedDays(plan)
         return VStack(spacing: 10) {
-            newPlanHeader
-            ForEach(sortedDays(plan)) { day in
-                Button { openRecipe(.mealPlanDay(day)) } label: {
-                    mealRow(day: day, isToday: day.dayOfWeek == today, plan: plan)
+            planListHeader
+            ForEach(allDays) { day in
+                Button {
+                    if isEditMode {
+                        toggleApproval(day)
+                    } else {
+                        openRecipe(.mealPlanDay(day))
+                    }
+                } label: {
+                    mealRow(
+                        day: day,
+                        isToday: day.dayOfWeek == today,
+                        plan: plan,
+                        isApproved: approvedDayIds.contains(day.id)
+                    )
                 }
                 .buttonStyle(.plain)
+                .disabled(isRegeneratingDays)
+            }
+            if isEditMode {
+                editModeFooter(plan: plan, allDays: allDays)
+                    .padding(.top, 4)
             }
         }
         .padding(.horizontal, 16)
     }
 
-    private func mealRow(day: MealPlanDay, isToday: Bool, plan: MealPlanWithDays) -> some View {
-        HStack(spacing: 14) {
+    private func toggleApproval(_ day: MealPlanDay) {
+        if approvedDayIds.contains(day.id) {
+            approvedDayIds.remove(day.id)
+        } else {
+            approvedDayIds.insert(day.id)
+        }
+    }
+
+    private func editModeFooter(plan: MealPlanWithDays, allDays: [MealPlanDay]) -> some View {
+        let unchecked = allDays.filter { !approvedDayIds.contains($0.id) }
+        let allApproved = approvedDayIds.count == allDays.count && !allDays.isEmpty
+        return VStack(spacing: 10) {
+            if !unchecked.isEmpty {
+                Button {
+                    Task { await regenerateUnchecked(unchecked: unchecked) }
+                } label: {
+                    HStack(spacing: 8) {
+                        if isRegeneratingDays {
+                            ProgressView().tint(Theme.ink)
+                        } else {
+                            SCIcon("swap", size: 15, color: Theme.ink)
+                        }
+                        Text(isRegeneratingDays
+                             ? "Regenerating…"
+                             : "Regenerate \(unchecked.count) Unchecked Day\(unchecked.count == 1 ? "" : "s")")
+                            .font(Theme.sans(14, weight: .semibold))
+                            .foregroundStyle(Theme.ink)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 48)
+                    .background(Theme.card)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.hairline2, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .disabled(isRegeneratingDays)
+            }
+            Button {
+                exitEditMode()
+            } label: {
+                HStack(spacing: 8) {
+                    SCIcon("check", size: 15, color: .white)
+                    Text(allApproved ? "Finalize Plan"
+                         : "Approve all \(allDays.count) days to finalize")
+                        .font(Theme.sans(14, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 48)
+                .background(allApproved ? Theme.terra : Theme.ink4)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+            }
+            .buttonStyle(.plain)
+            .disabled(!allApproved || isRegeneratingDays)
+        }
+    }
+
+    @MainActor
+    private func regenerateUnchecked(unchecked: [MealPlanDay]) async {
+        guard !isRegeneratingDays else { return }
+        let daysToRegenerate = unchecked.map { $0.dayOfWeek }
+        guard !daysToRegenerate.isEmpty else { return }
+        isRegeneratingDays = true
+        defer { isRegeneratingDays = false }
+
+        struct Body: Encodable {
+            let weekStartDate: String
+            let daysToRegenerate: [Int]
+        }
+        let client = APIClient(baseURL: AppConfig.backendBaseURL, auth: auth)
+        do {
+            let updated: MealPlanWithDays = try await client.post(
+                "/api/kitchen/regenerate-days",
+                Body(weekStartDate: currentWeek, daysToRegenerate: daysToRegenerate)
+            )
+            loadState = .loaded(plan: updated)
+        } catch let e as APIError where e.isBenignCancellation {
+            return
+        } catch {
+            loadState = .failed("Couldn't regenerate: \(error.localizedDescription)")
+        }
+    }
+
+    private func mealRow(day: MealPlanDay, isToday: Bool, plan: MealPlanWithDays, isApproved: Bool) -> some View {
+        // In edit mode the today-tint is dropped — the approval state
+        // is the visual signal that matters, and the dark "today"
+        // background would fight with the terra approval ring.
+        let dimmedToday = isToday && !isEditMode
+        return HStack(spacing: 14) {
+            if isEditMode {
+                checkbox(isApproved: isApproved)
+            }
             VStack(spacing: 2) {
                 Text(DateUtil.dayName(day.dayOfWeek).prefix(3).uppercased())
                     .font(.system(size: 11, weight: .semibold))
@@ -321,7 +450,7 @@ struct PlanScreen: View {
                 Text(DateUtil.dayNumber(for: day.dayOfWeek, weekStart: plan.weekStartDate))
                     .font(Theme.display(28, weight: .medium))
             }
-            .foregroundStyle(isToday ? Theme.bg : Theme.ink)
+            .foregroundStyle(dimmedToday ? Theme.bg : Theme.ink)
             .frame(width: 56)
 
             Rectangle()
@@ -333,28 +462,51 @@ struct PlanScreen: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(day.mealName)
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(isToday ? Theme.bg : Theme.ink)
+                    .foregroundStyle(dimmedToday ? Theme.bg : Theme.ink)
                 if let notes = day.notes, !notes.isEmpty {
                     HStack(spacing: 4) {
                         SCIcon("clock", size: 11,
-                               color: isToday ? Theme.bg.opacity(0.6) : Theme.ink3)
+                               color: dimmedToday ? Theme.bg.opacity(0.6) : Theme.ink3)
                         Text(notes).font(.system(size: 12))
                     }
-                    .foregroundStyle(isToday ? Theme.bg.opacity(0.6) : Theme.ink3)
+                    .foregroundStyle(dimmedToday ? Theme.bg.opacity(0.6) : Theme.ink3)
                 }
             }
             Spacer(minLength: 0)
-            SCIcon("chevR", size: 16,
-                   color: isToday ? Theme.bg.opacity(0.5) : Theme.ink4)
+            // Chevron in normal mode, check in edit-and-approved mode,
+            // ink4 dot otherwise (so the row keeps its visual rhythm).
+            if isEditMode {
+                if isApproved {
+                    SCIcon("check", size: 16, color: Theme.terra)
+                }
+            } else {
+                SCIcon("chevR", size: 16,
+                       color: dimmedToday ? Theme.bg.opacity(0.5) : Theme.ink4)
+            }
         }
         .padding(12)
-        .background(isToday ? Theme.ink : Theme.card)
+        .background(dimmedToday ? Theme.ink : Theme.card)
         .clipShape(RoundedRectangle(cornerRadius: 20))
         .overlay(
             RoundedRectangle(cornerRadius: 20)
-                .strokeBorder(Theme.hairline2, lineWidth: isToday ? 0 : 1)
+                .strokeBorder(
+                    isApproved ? Theme.terra : Theme.hairline2,
+                    lineWidth: isApproved ? 2 : (dimmedToday ? 0 : 1))
         )
-        .shadow(color: .black.opacity(isToday ? 0.18 : 0), radius: 9, y: 6)
+        .shadow(color: .black.opacity(dimmedToday ? 0.18 : 0), radius: 9, y: 6)
+    }
+
+    private func checkbox(isApproved: Bool) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isApproved ? Theme.terra : Color.clear)
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(isApproved ? Theme.terra : Theme.ink4, lineWidth: 1.5)
+            if isApproved {
+                SCIcon("check", size: 12, color: .white, weight: .bold)
+            }
+        }
+        .frame(width: 22, height: 22)
     }
 
     // MARK: Shopping summary (still mock — wired with /api/kitchen/shopping-list later)
