@@ -751,3 +751,86 @@ Verified: `xcodebuild iphonesimulator` clean, zero warnings. The
 backend already had every endpoint these features need
 (`/week/{date}`, `/regenerate-image`, `/recipe-message`) — the
 audit had just left the iOS side unwired.
+
+---
+
+## 2026-05-24 · Real-device round 2: persisted images, one-click planning,
+edit-plan sheet, app icon
+
+Dave's first sideload session on the iPhone surfaced four more issues
+none of which were captured in the audit:
+
+1. **Stock-photo placeholders look wrong.** `ImageLookup`'s keyword
+   match returned spaghetti carbonara for "Classic Chili with Cornbread"
+   and a brown bowl for "Baked Salmon." Dave wanted them gone
+   entirely — show a real persisted AI image or a "Tap to generate"
+   placeholder.
+
+2. **Generated images don't persist.** `/regenerate-image` returned a
+   data URL but the iOS client only held it in `@State`; navigating
+   away wiped it.
+
+3. **"Plan my week" goes to chat instead of running.** The empty-state
+   CTA on both Home and Plan pushed the user to the chat tab to type
+   "plan my week" themselves. Dave wanted one-click execution.
+
+4. **No way to edit a plan without going through recipe chat.** The
+   recipe-chat flow works for individual swaps, but bulk-editing
+   meal names directly from the Plan view was missing.
+
+Plus an app icon (separate change, same day).
+
+Changes:
+
+- **Schema migration** `20260524000000_add_image_urls.sql` adds
+  `image_url TEXT` to both `meal_plan_days` and `cookbook_recipes`.
+  Applied via a one-shot direct-pgx script
+  (`/tmp/apply_one.go` — the existing `cmd/migrate` tool doesn't
+  track state, so re-running it from scratch errors on existing
+  tables).
+
+- **Backend persistence**: `MealPlanDay.ImageURL` and
+  `CookbookRecipe.ImageURL` fields, scan updates, two new store
+  methods (`SetMealPlanDayImage`, `SetCookbookImage`).
+  `UpdateMealPlanDayMeal` now clears `image_url` too — the old
+  photo no longer matches the new dish. `handleRegenerateImage`
+  accepts optional `dayId` / `recipeId` and persists on whichever
+  is set (authorizing first), still returns the data URL.
+
+- **New `PATCH /api/kitchen/meal-plan-day/{id}`** handler — direct
+  meal-name + notes edits from the Plan tab. Validates ownership,
+  trims input, calls `UpdateMealPlanDayMeal` (which clears recipe
+  content / image as a side effect), returns the fresh row.
+
+- **iOS `RecipeImage` view** (`Helpers/RecipeImage.swift`) replaces
+  every `ImageLookup`/`FoodImage` call site. Renders either the
+  decoded base64 image or a Tap-to-generate placeholder (with a
+  sparkle and the prompt text); a `compact: true` variant for
+  list thumbnails skips the text and shrinks the sparkle.
+  Caller passes `onGenerate` only on surfaces where tap-to-generate
+  is the obvious action (Recipe hero).
+
+- **iOS DTOs**: `MealPlanDay.imageUrl` and `CookbookRecipe.imageUrl`
+  added. RecipeScreen reads from `currentImageURL` which prefers the
+  session-local generated URL, falling back to the persisted row
+  field. `regenerateImage()` now passes `dayId` / `recipeId` so the
+  server persists.
+
+- **One-click `Plan my week`** on Home and Plan empty cards calls
+  `POST /api/kitchen/generate-meal-plan` directly with a `Cooking
+  up your week…` button-spinner state. No chat detour.
+
+- **EditPlanSheet** in PlanScreen — a new "edit" icon in the Plan
+  NavBar (terra pencil) opens a modal with one card per day,
+  editable `mealName` + `notes`. Save PATCHes each modified day in
+  sequence, then signals the parent to reload. Save button is
+  disabled until there are changes.
+
+- **App icon**: a clean cream-line drawing of a chef's toque on a
+  warm terra-cotta background, generated via `gpt-image-1` with a
+  prompt that explicitly forbids cream borders so iOS's own corner
+  mask doesn't show pale corners. Stored as
+  `Assets.xcassets/AppIcon.appiconset/icon-1024.png`.
+
+Verified: `go build ./...` clean, backend restarted on `:8080`.
+`xcodebuild iphonesimulator` clean, zero warnings.

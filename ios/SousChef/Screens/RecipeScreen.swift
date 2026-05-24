@@ -37,7 +37,10 @@ struct RecipeScreen: View {
     @State private var saved = false
     @State private var isSaving = false
     @State private var saveError: String?
-    @State private var generatedImage: UIImage?
+    /// Image URL set during this view's lifetime — overrides whatever was
+    /// stored on the source row. Lets the user see the new image
+    /// immediately without a refetch.
+    @State private var generatedImageURL: String?
     @State private var isGeneratingImage = false
     @State private var showingChat = false
 
@@ -109,8 +112,15 @@ struct RecipeScreen: View {
         }
     }
 
-    private var heroImage: String {
-        ImageLookup.url(for: title)
+    /// The image URL to display on the hero. Prefers an image generated
+    /// during this session; falls back to whatever the server has stored
+    /// on the row. Nil → render the "Tap to generate" placeholder.
+    private var currentImageURL: String? {
+        if let local = generatedImageURL { return local }
+        switch source {
+        case .mealPlanDay(let day): return day.imageUrl
+        case .cookbook(let recipe): return recipe.imageUrl
+        }
     }
 
     // MARK: Load
@@ -209,25 +219,14 @@ struct RecipeScreen: View {
             .fill(Theme.elev)
             .frame(height: 380)
             .overlay {
-                // Generated image (from regenerate-image) takes precedence
-                // over the stock-photo lookup — the lookup is only a
-                // fallback while the user hasn't asked for a real photo yet.
-                if let generatedImage {
-                    Image(uiImage: generatedImage)
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    FoodImage(url: heroImage)
-                }
-                if isGeneratingImage {
-                    Color.black.opacity(0.45)
-                    VStack(spacing: 8) {
-                        ProgressView().tint(.white)
-                        Text("Generating photo…")
-                            .font(Theme.sans(13, weight: .semibold))
-                            .foregroundStyle(.white)
-                    }
-                }
+                // Persisted image (from /regenerate-image) is the only
+                // image source now — no more keyword stock photos. If
+                // nothing is stored, show a Tap-to-generate placeholder.
+                RecipeImage(
+                    url: currentImageURL,
+                    onGenerate: { Task { await regenerateImage() } },
+                    isGenerating: isGeneratingImage
+                )
             }
             .clipped()
             .overlay {
@@ -463,35 +462,37 @@ struct RecipeScreen: View {
         guard !isGeneratingImage, !promptForImage.isEmpty else { return }
         isGeneratingImage = true
         defer { isGeneratingImage = false }
-        struct Body: Encodable { let prompt: String }
+
+        // Tell the backend WHICH row to persist on so the image survives
+        // app restarts. The view's source decides which id to send.
+        struct Body: Encodable {
+            let prompt: String
+            let dayId: Int?
+            let recipeId: Int?
+        }
         struct Response: Decodable { let imageUrl: String }
+
+        let body: Body = {
+            switch source {
+            case .mealPlanDay(let day):
+                return Body(prompt: promptForImage, dayId: day.id, recipeId: nil)
+            case .cookbook(let recipe):
+                return Body(prompt: promptForImage, dayId: nil, recipeId: recipe.id)
+            }
+        }()
+
         do {
             let resp: Response = try await client.post(
-                "/api/kitchen/regenerate-image",
-                Body(prompt: promptForImage)
+                "/api/kitchen/regenerate-image", body
             )
-            // The server emits a "data:image/png;base64,<b64>" URL.
-            // Decode it into a UIImage and replace the hero.
-            if let img = decodeDataURL(resp.imageUrl) {
-                withAnimation(.easeInOut(duration: 0.25)) {
-                    generatedImage = img
-                }
-            } else {
-                errorMessage = "Got an image but couldn't read it."
+            withAnimation(.easeInOut(duration: 0.25)) {
+                generatedImageURL = resp.imageUrl
             }
         } catch let e as APIError where e.isBenignCancellation {
             // Quietly ignore — view went away.
         } catch {
             errorMessage = "Image: \(error.localizedDescription)"
         }
-    }
-
-    private func decodeDataURL(_ s: String) -> UIImage? {
-        guard let comma = s.firstIndex(of: ","),
-              let data = Data(base64Encoded: String(s[s.index(after: comma)...])) else {
-            return nil
-        }
-        return UIImage(data: data)
     }
 
     /// Persist the current recipe to the cookbook via

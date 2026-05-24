@@ -88,6 +88,9 @@ struct Ingredient: Codable, Identifiable {
 }
 
 /// One day inside a meal plan. `dayOfWeek` is 0=Sunday … 6=Saturday.
+/// `imageUrl` is a persisted `data:image/png;base64,…` URL set by
+/// `/regenerate-image`; nil means "no image generated yet — show the
+/// Tap-to-generate placeholder."
 struct MealPlanDay: Codable, Identifiable {
     let id: Int
     let mealPlanId: Int
@@ -97,6 +100,7 @@ struct MealPlanDay: Codable, Identifiable {
     let notes: String?
     let recipeContent: String?
     let recipeImagePrompt: String?
+    let imageUrl: String?
 }
 
 /// `GET /api/kitchen/meal-plan` — the user's most recent plan, with days.
@@ -109,13 +113,16 @@ struct MealPlanWithDays: Codable, Identifiable {
     let days: [MealPlanDay]
 }
 
-/// `GET /api/kitchen/cookbook[/{id}]` — a saved recipe.
+/// `GET /api/kitchen/cookbook[/{id}]` — a saved recipe. `imageUrl` is
+/// a persisted `data:image/png;base64,…` URL — same semantics as
+/// `MealPlanDay.imageUrl`.
 struct CookbookRecipe: Codable, Identifiable {
     let id: Int
     let userId: String
     let title: String
     let content: String
     let imagePrompt: String?
+    let imageUrl: String?
     let createdAt: Date
 }
 

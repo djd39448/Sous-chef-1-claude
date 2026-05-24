@@ -109,6 +109,64 @@ func (s *Server) handleGetMealPlanDay(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, store.MealPlanDayWithUser{MealPlanDay: day, UserID: owner})
 }
 
+// handlePatchMealPlanDay serves PATCH /api/kitchen/meal-plan-day/{id} —
+// direct edits of `mealName` and `notes` from the Plan tab's edit sheet
+// (no AI involvement). The store call clears `recipe_content`,
+// `recipe_image_prompt`, and `image_url` because all of those described
+// the OLD dish and would mislead users if left.
+func (s *Server) handlePatchMealPlanDay(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id, ok := pathInt(r, "id")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid day id")
+		return
+	}
+
+	// Ownership check before mutation.
+	_, owner, err := s.store.GetMealPlanDay(ctx, id)
+	if writeStoreErr(w, err, "meal-plan day not found") {
+		return
+	}
+	if owner != auth.UserID(ctx) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	var body struct {
+		MealName string  `json:"mealName"`
+		Notes    *string `json:"notes"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	mealName := strings.TrimSpace(body.MealName)
+	if mealName == "" {
+		writeError(w, http.StatusBadRequest, "mealName is required")
+		return
+	}
+	if body.Notes != nil {
+		trimmed := strings.TrimSpace(*body.Notes)
+		if trimmed == "" {
+			body.Notes = nil
+		} else {
+			body.Notes = &trimmed
+		}
+	}
+
+	if err := s.store.UpdateMealPlanDayMeal(ctx, id, mealName, body.Notes); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	// Return the fresh row so the iOS client doesn't need a second fetch.
+	day, _, err := s.store.GetMealPlanDay(ctx, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, day)
+}
+
 // handleGenerateMealPlan serves POST /api/kitchen/generate-meal-plan.
 func (s *Server) handleGenerateMealPlan(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

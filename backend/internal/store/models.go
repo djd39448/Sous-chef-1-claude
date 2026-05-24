@@ -54,7 +54,9 @@ type MealPlan struct {
 	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
-// MealPlanDay is one day within a meal plan.
+// MealPlanDay is one day within a meal plan. `ImageURL` is the persisted
+// `data:image/png;base64,…` URL emitted by gpt-image-1 (or nil for "no
+// image generated yet; show Tap-to-generate placeholder").
 type MealPlanDay struct {
 	ID                int     `json:"id"`
 	MealPlanID        int     `json:"mealPlanId"`
@@ -64,6 +66,7 @@ type MealPlanDay struct {
 	Notes             *string `json:"notes"`
 	RecipeContent     *string `json:"recipeContent"`
 	RecipeImagePrompt *string `json:"recipeImagePrompt"`
+	ImageURL          *string `json:"imageUrl"`
 }
 
 // MealPlanWithDays is a meal plan plus its days.
@@ -106,13 +109,15 @@ type ShoppingListWithItems struct {
 	Items []ShoppingItem `json:"items"`
 }
 
-// CookbookRecipe is a saved recipe.
+// CookbookRecipe is a saved recipe. `ImageURL` is the persisted
+// `data:image/png;base64,…` URL — same semantics as MealPlanDay.ImageURL.
 type CookbookRecipe struct {
 	ID          int       `json:"id"`
 	UserID      string    `json:"userId"`
 	Title       string    `json:"title"`
 	Content     string    `json:"content"`
 	ImagePrompt *string   `json:"imagePrompt"`
+	ImageURL    *string   `json:"imageUrl"`
 	CreatedAt   time.Time `json:"createdAt"`
 }
 

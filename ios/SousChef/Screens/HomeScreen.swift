@@ -13,6 +13,7 @@ struct HomeScreen: View {
     @Environment(AuthModel.self) private var auth
 
     @State private var loadState: LoadState = .loading
+    @State private var isGeneratingPlan = false
 
     private enum LoadState {
         case loading
@@ -202,13 +203,18 @@ struct HomeScreen: View {
             Text("No meal plan for this week yet.")
                 .font(Theme.display(20, weight: .medium))
                 .foregroundStyle(Theme.ink)
-            Text("Ask Sous Chef to plan your week from the chat.")
+            Text("Tap below — Sous Chef will put one together right now.")
                 .font(Theme.sans(14))
                 .foregroundStyle(Theme.ink2)
-            Button { goToTab(.chat) } label: {
+            Button { Task { await generatePlan() } } label: {
                 HStack(spacing: 8) {
-                    SCIcon("sparkle", size: 16, color: .white)
-                    Text("Plan my week").font(Theme.sans(14, weight: .semibold))
+                    if isGeneratingPlan {
+                        ProgressView().tint(.white)
+                    } else {
+                        SCIcon("sparkle", size: 16, color: .white)
+                    }
+                    Text(isGeneratingPlan ? "Cooking up your week…" : "Plan my week")
+                        .font(Theme.sans(14, weight: .semibold))
                 }
                 .foregroundStyle(.white)
                 .padding(.horizontal, 16)
@@ -217,6 +223,7 @@ struct HomeScreen: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
             .buttonStyle(.plain)
+            .disabled(isGeneratingPlan)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)
@@ -224,12 +231,36 @@ struct HomeScreen: View {
         .padding(.horizontal, 16)
     }
 
+    /// One-click plan generation from the Home tab. Calls
+    /// `/api/kitchen/generate-meal-plan` directly and reloads the screen
+    /// so the new plan shows up immediately, instead of bouncing the
+    /// user into chat to type the request out.
+    @MainActor
+    private func generatePlan() async {
+        guard !isGeneratingPlan else { return }
+        isGeneratingPlan = true
+        defer { isGeneratingPlan = false }
+        let client = APIClient(baseURL: AppConfig.backendBaseURL, auth: auth)
+        struct Body: Encodable { let weekStartDate: String }
+        do {
+            let _: MealPlanWithDays = try await client.post(
+                "/api/kitchen/generate-meal-plan",
+                Body(weekStartDate: DateUtil.todaysMondayString())
+            )
+            await load()
+        } catch let e as APIError where e.isBenignCancellation {
+            return
+        } catch {
+            loadState = .failed("Couldn't generate a plan: \(error.localizedDescription)")
+        }
+    }
+
     private func tonightLoaded(meal: MealPlanDay) -> some View {
         VStack(spacing: 0) {
             Rectangle()
                 .fill(Theme.elev)
                 .aspectRatio(16.0 / 10.0, contentMode: .fit)
-                .overlay { FoodImage(url: ImageLookup.url(for: meal.mealName)) }
+                .overlay { RecipeImage(url: meal.imageUrl) }
                 .clipped()
                 .overlay(alignment: .topLeading) {
                     Text("TONIGHT'S DINNER")

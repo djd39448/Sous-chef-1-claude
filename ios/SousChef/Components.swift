@@ -55,6 +55,7 @@ struct SCIcon: View {
         case "filter":    return "line.3.horizontal.decrease"
         case "photo":     return "photo"
         case "dot":       return "circle.fill"
+        case "edit":      return "square.and.pencil"
         default:          return "questionmark"
         }
     }

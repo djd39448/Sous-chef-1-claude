@@ -9,7 +9,7 @@ import (
 )
 
 const mealPlanCols = `id, user_id, week_start_date, created_at, updated_at`
-const mealPlanDayCols = `id, meal_plan_id, day_of_week, recipe_id, meal_name, notes, recipe_content, recipe_image_prompt`
+const mealPlanDayCols = `id, meal_plan_id, day_of_week, recipe_id, meal_name, notes, recipe_content, recipe_image_prompt, image_url`
 
 // MealInput is one meal to place into a plan.
 type MealInput struct {
@@ -29,7 +29,7 @@ func scanMealPlan(row pgx.Row) (MealPlan, error) {
 func scanMealPlanDay(row pgx.Row) (MealPlanDay, error) {
 	var d MealPlanDay
 	err := row.Scan(&d.ID, &d.MealPlanID, &d.DayOfWeek, &d.RecipeID,
-		&d.MealName, &d.Notes, &d.RecipeContent, &d.RecipeImagePrompt)
+		&d.MealName, &d.Notes, &d.RecipeContent, &d.RecipeImagePrompt, &d.ImageURL)
 	return d, err
 }
 
@@ -119,7 +119,7 @@ func (s *Store) GetMealPlanWithDays(ctx context.Context, plan MealPlan) (MealPla
 func (s *Store) GetMealPlanDay(ctx context.Context, id int) (MealPlanDay, string, error) {
 	row := s.pool.QueryRow(ctx,
 		`SELECT d.id, d.meal_plan_id, d.day_of_week, d.recipe_id, d.meal_name,
-		        d.notes, d.recipe_content, d.recipe_image_prompt, p.user_id
+		        d.notes, d.recipe_content, d.recipe_image_prompt, d.image_url, p.user_id
 		 FROM meal_plan_days d
 		 JOIN meal_plans p ON p.id = d.meal_plan_id
 		 WHERE d.id = $1`, id)
@@ -127,7 +127,7 @@ func (s *Store) GetMealPlanDay(ctx context.Context, id int) (MealPlanDay, string
 	var d MealPlanDay
 	var owner string
 	err := row.Scan(&d.ID, &d.MealPlanID, &d.DayOfWeek, &d.RecipeID, &d.MealName,
-		&d.Notes, &d.RecipeContent, &d.RecipeImagePrompt, &owner)
+		&d.Notes, &d.RecipeContent, &d.RecipeImagePrompt, &d.ImageURL, &owner)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return MealPlanDay{}, "", ErrNotFound
 	}
@@ -144,12 +144,24 @@ func (s *Store) SetMealPlanDayRecipe(ctx context.Context, id int, content, image
 }
 
 // UpdateMealPlanDayMeal swaps a day's meal name and notes, and clears any
-// previously generated recipe content and image prompt.
+// previously generated recipe content, image prompt, and stored image —
+// the old image was of the old dish, so leaving it would be misleading.
 func (s *Store) UpdateMealPlanDayMeal(ctx context.Context, id int, mealName string, notes *string) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE meal_plan_days
-		 SET meal_name = $2, notes = $3, recipe_content = NULL, recipe_image_prompt = NULL
+		 SET meal_name = $2, notes = $3,
+		     recipe_content = NULL, recipe_image_prompt = NULL, image_url = NULL
 		 WHERE id = $1`, id, mealName, notes)
+	return err
+}
+
+// SetMealPlanDayImage stores a generated image (data:image/png;base64,…)
+// URL on a meal-plan day. Called after a successful /regenerate-image
+// for an mpd target. The URL persists across launches so the iOS hero
+// stays the same until the user explicitly regenerates.
+func (s *Store) SetMealPlanDayImage(ctx context.Context, id int, imageURL string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE meal_plan_days SET image_url = $2 WHERE id = $1`, id, imageURL)
 	return err
 }
 
@@ -192,7 +204,7 @@ func (s *Store) ReplaceMealPlan(ctx context.Context, userID, weekStart string, m
 			 VALUES ($1, $2, $3, $4) RETURNING `+mealPlanDayCols,
 			plan.ID, m.DayOfWeek, m.MealName, m.Notes).
 			Scan(&d.ID, &d.MealPlanID, &d.DayOfWeek, &d.RecipeID, &d.MealName,
-				&d.Notes, &d.RecipeContent, &d.RecipeImagePrompt); err != nil {
+				&d.Notes, &d.RecipeContent, &d.RecipeImagePrompt, &d.ImageURL); err != nil {
 			return MealPlanWithDays{}, err
 		}
 		days = append(days, d)

@@ -7,12 +7,20 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const cookbookCols = `id, user_id, title, content, image_prompt, created_at`
+const cookbookCols = `id, user_id, title, content, image_prompt, image_url, created_at`
 
 func scanCookbook(row pgx.Row) (CookbookRecipe, error) {
 	var c CookbookRecipe
-	err := row.Scan(&c.ID, &c.UserID, &c.Title, &c.Content, &c.ImagePrompt, &c.CreatedAt)
+	err := row.Scan(&c.ID, &c.UserID, &c.Title, &c.Content, &c.ImagePrompt, &c.ImageURL, &c.CreatedAt)
 	return c, err
+}
+
+// SetCookbookImage stores a generated image URL on a cookbook recipe.
+// Persists across launches so the saved-recipe hero is permanent.
+func (s *Store) SetCookbookImage(ctx context.Context, id int, imageURL string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE cookbook_recipes SET image_url = $2 WHERE id = $1`, id, imageURL)
+	return err
 }
 
 // ListCookbook returns the user's saved recipes, newest first.

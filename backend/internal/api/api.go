@@ -51,6 +51,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/kitchen/week/{weekStartDate}", s.handleGetWeek)
 	mux.HandleFunc("POST /api/kitchen/generate-meal-plan", s.handleGenerateMealPlan)
 	mux.HandleFunc("GET /api/kitchen/meal-plan-day/{id}", s.handleGetMealPlanDay)
+	mux.HandleFunc("PATCH /api/kitchen/meal-plan-day/{id}", s.handlePatchMealPlanDay)
 	mux.HandleFunc("POST /api/kitchen/generate-recipe/{dayId}", s.handleGenerateRecipe)
 	mux.HandleFunc("POST /api/kitchen/recipe-message", s.handleRecipeMessage)
 
