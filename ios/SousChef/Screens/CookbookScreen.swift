@@ -32,6 +32,7 @@ struct CookbookScreen: View {
             }
         }
         .background(Theme.bg)
+        .tabBarClearance()
         .navigationBarHidden(true)
         .task { await load() }
         .refreshable { await load() }

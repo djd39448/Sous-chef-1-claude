@@ -55,6 +55,7 @@ struct PlanScreen: View {
             }
         }
         .background(Theme.bg)
+        .tabBarClearance()
         .navigationBarHidden(true)
         .navigationDestination(isPresented: $showCalendar) { CalendarScreen() }
         .task { await load() }

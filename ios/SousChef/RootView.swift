@@ -91,6 +91,28 @@ struct MainView: View {
     }
 }
 
+/// Pads the bottom of a tab's scrollable content so the last row
+/// isn't hidden behind the CustomTabBar. SwiftUI's
+/// `.safeAreaInset(.bottom)` should propagate the tab-bar height to
+/// child ScrollViews, but it's flaky through `NavigationStack` in
+/// iOS 17/18 — some screens see the inset, some don't. This modifier
+/// adds explicit clearance so every screen behaves the same.
+///
+/// Apply once on the outermost `ScrollView` of each tab screen.
+struct TabBarClearance: ViewModifier {
+    func body(content: Content) -> some View {
+        content.safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear.frame(height: 32)
+        }
+    }
+}
+
+extension View {
+    func tabBarClearance() -> some View {
+        modifier(TabBarClearance())
+    }
+}
+
 /// The custom bottom tab bar — five items, cream frosted glass, terracotta active.
 struct CustomTabBar: View {
     let active: Tab

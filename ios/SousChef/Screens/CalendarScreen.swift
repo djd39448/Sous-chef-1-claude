@@ -60,6 +60,7 @@ struct CalendarScreen: View {
             }
         }
         .background(Theme.bg)
+        .tabBarClearance()
         .navigationBarHidden(true)
         .task {
             await load()
