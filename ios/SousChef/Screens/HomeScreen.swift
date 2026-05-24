@@ -15,6 +15,20 @@ struct HomeScreen: View {
     @State private var loadState: LoadState = .loading
     @State private var isGeneratingPlan = false
 
+    /// Maps meal-plan-day id → just-generated image URL. Lets the
+    /// tonight hero swap to the fresh image without waiting for the
+    /// next load() refetch. We keep it as a dictionary so flipping
+    /// between tabs (which keeps Home alive) doesn't lose what we
+    /// generated for a different day this session.
+    @State private var autoImageURLs: [Int: String] = [:]
+    /// The set of meal-plan-day ids we've already kicked off an
+    /// auto-generation for in this session — prevents a re-fire if the
+    /// view body re-runs while the request is still in flight.
+    @State private var autoTried: Set<Int> = []
+    /// Currently auto-generating for which day id? (Drives the spinner
+    /// overlay on the tonight hero.)
+    @State private var autoGenerating: Int?
+
     private enum LoadState {
         case loading
         case loaded(profile: Profile, plan: MealPlanWithDays?, ingredients: [Ingredient])
@@ -231,6 +245,56 @@ struct HomeScreen: View {
         .padding(.horizontal, 16)
     }
 
+    /// Auto-fire image generation for tonight's dinner the first time
+    /// we see a meal that has no `imageUrl` yet. Runs once per day id
+    /// per session — the `autoTried` set keeps us from re-firing if the
+    /// view re-renders during the in-flight call. Server persists the
+    /// image to `meal_plan_days.image_url` so the next launch finds it
+    /// already there and skips this whole path.
+    @MainActor
+    private func autoGenerateTonightImageIfNeeded(meal: MealPlanDay) async {
+        // Server already has an image — nothing to do.
+        if meal.imageUrl != nil { return }
+        // Locally already generated this session — nothing to do.
+        if autoImageURLs[meal.id] != nil { return }
+        // Already started a request for this day id — guard against
+        // SwiftUI's task re-fires while the in-flight call is pending.
+        if autoTried.contains(meal.id) { return }
+        autoTried.insert(meal.id)
+
+        let prompt = (meal.recipeImagePrompt?.isEmpty == false)
+            ? meal.recipeImagePrompt!
+            : meal.mealName
+        guard !prompt.isEmpty else { return }
+
+        autoGenerating = meal.id
+        defer { autoGenerating = nil }
+
+        let client = APIClient(baseURL: AppConfig.backendBaseURL, auth: auth)
+        struct Body: Encodable {
+            let prompt: String
+            let dayId: Int
+        }
+        struct Response: Decodable { let imageUrl: String }
+        do {
+            let resp: Response = try await client.post(
+                "/api/kitchen/regenerate-image",
+                Body(prompt: prompt, dayId: meal.id)
+            )
+            withAnimation(.easeInOut(duration: 0.25)) {
+                autoImageURLs[meal.id] = resp.imageUrl
+            }
+        } catch let e as APIError where e.isBenignCancellation {
+            // View went away mid-request; allow a retry next time by
+            // clearing the "already tried" marker.
+            autoTried.remove(meal.id)
+        } catch {
+            // Quietly fail — auto-generation is best-effort. The user
+            // can still tap the photo button on the Recipe screen.
+            autoTried.remove(meal.id)
+        }
+    }
+
     /// One-click plan generation from the Home tab. Calls
     /// `/api/kitchen/generate-meal-plan` directly and reloads the screen
     /// so the new plan shows up immediately, instead of bouncing the
@@ -260,8 +324,14 @@ struct HomeScreen: View {
             Rectangle()
                 .fill(Theme.elev)
                 .aspectRatio(16.0 / 10.0, contentMode: .fit)
-                .overlay { RecipeImage(url: meal.imageUrl) }
+                .overlay {
+                    RecipeImage(
+                        url: autoImageURLs[meal.id] ?? meal.imageUrl,
+                        isGenerating: autoGenerating == meal.id
+                    )
+                }
                 .clipped()
+                .task(id: meal.id) { await autoGenerateTonightImageIfNeeded(meal: meal) }
                 .overlay(alignment: .topLeading) {
                     Text("TONIGHT'S DINNER")
                         .font(.system(size: 11, weight: .semibold))
