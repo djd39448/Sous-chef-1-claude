@@ -1,16 +1,19 @@
 import SwiftUI
 
-/// The Cookbook tab — saved recipes: filters, a "last saved" featured
-/// card, and a 2-column grid.
+//// The Cookbook tab — saved recipes with a text-search field, a
+/// "last saved" featured card, and a 2-column grid.
 ///
-/// Wired to `GET /api/kitchen/cookbook` ([CookbookRecipe]). Filter chips
-/// are still mock (no tagging in the contract yet); when the user has no
-/// saved recipes the grid is replaced by an empty-state card.
+/// Wired to `GET /api/kitchen/cookbook` ([CookbookRecipe]). Search matches
+/// the original web app: case-insensitive substring on `title` OR
+/// `content`, filtered entirely client-side. The empty-state card
+/// distinguishes between "no recipes at all" and "no recipes match this
+/// search."
 struct CookbookScreen: View {
     var openRecipe: (RecipeSource) -> Void = { _ in }
 
     @Environment(AuthModel.self) private var auth
     @State private var loadState: LoadState = .loading
+    @State private var query: String = ""
 
     private enum LoadState {
         case loading
@@ -18,18 +21,13 @@ struct CookbookScreen: View {
         case failed(String)
     }
 
-    // Filter list removed in the dead-button cull (B-12); tagging on
-    // cookbook_recipes is a follow-up.
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
                 NavBar(largeTitle: "Cookbook")
-                // Filter chips, search, and the + button were all decorative
-                // (B-12). Filters require backend tagging we don't have yet;
-                // saving happens from the chat or the Recipe bookmark button.
-                // Both reappear once their backends exist.
+                searchField
                 content
             }
         }
@@ -37,6 +35,44 @@ struct CookbookScreen: View {
         .navigationBarHidden(true)
         .task { await load() }
         .refreshable { await load() }
+    }
+
+    // MARK: Search
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            SCIcon("search", size: 14, color: Theme.ink3)
+            TextField("Search by name or ingredient…", text: $query)
+                .textFieldStyle(.plain)
+                .font(Theme.sans(14))
+                .foregroundStyle(Theme.ink)
+                .autocorrectionDisabled(true)
+                .textInputAutocapitalization(.never)
+                .submitLabel(.search)
+            if !query.isEmpty {
+                Button { query = "" } label: {
+                    SCIcon("close", size: 12, color: Theme.ink3)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 40)
+        .background(Theme.card)
+        .clipShape(Capsule())
+        .overlay(Capsule().strokeBorder(Theme.hairline2, lineWidth: 1))
+        .padding(.horizontal, 16)
+        .padding(.bottom, 16)
+    }
+
+    /// Substring match on title OR content, case-insensitive — matches
+    /// the original web app's `useMemo` filter exactly.
+    private func filter(_ recipes: [CookbookRecipe]) -> [CookbookRecipe] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return recipes }
+        return recipes.filter {
+            $0.title.lowercased().contains(q) || $0.content.lowercased().contains(q)
+        }
     }
 
     // MARK: Loading
@@ -68,11 +104,37 @@ struct CookbookScreen: View {
         case .loaded(let recipes) where recipes.isEmpty:
             emptyCard
         case .loaded(let recipes):
-            VStack(spacing: 0) {
-                featuredCard(recipes.first!)
-                recipeGrid(recipes)
+            let matches = filter(recipes)
+            if matches.isEmpty {
+                noMatchesCard
+            } else {
+                VStack(spacing: 0) {
+                    // Featured card only shows when no filter is active —
+                    // search results lead with the grid for readability.
+                    if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                        featuredCard(matches.first!)
+                        recipeGrid(matches)
+                    } else {
+                        recipeGrid(matches)
+                    }
+                }
             }
         }
+    }
+
+    private var noMatchesCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("No matches.")
+                .font(Theme.display(20, weight: .medium))
+                .foregroundStyle(Theme.ink)
+            Text("Nothing in your cookbook matches \"\(query)\".")
+                .font(Theme.sans(14))
+                .foregroundStyle(Theme.ink2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(20)
+        .cardSurface(22)
+        .padding(.horizontal, 16)
     }
 
     private var loadingGrid: some View {

@@ -37,16 +37,63 @@ struct RecipeScreen: View {
     @State private var saved = false
     @State private var isSaving = false
     @State private var saveError: String?
+    @State private var generatedImage: UIImage?
+    @State private var isGeneratingImage = false
+    @State private var showingChat = false
 
     var body: some View {
-        // The floating "Ask about this recipe…" pill is hidden until
-        // /api/kitchen/recipe-message is wired (B-08). Shipping a dead
-        // text-field-shaped affordance teaches users it's broken; better to
-        // have one less button and add it back once it does something.
-        scrollContent
-            .background(Theme.bg)
-            .overlay(alignment: .top) { topButtons }
-            .task { await load() }
+        ZStack(alignment: .bottom) {
+            scrollContent
+            // The floating pill at the bottom — tap to open the per-recipe
+            // chat sheet. Only shown for meal-plan recipes because the
+            // /recipe-message endpoint requires a dayId.
+            if case .mealPlanDay = source {
+                floatingPill
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 24)
+            }
+        }
+        .background(Theme.bg)
+        .overlay(alignment: .top) { topButtons }
+        .task { await load() }
+        .sheet(isPresented: $showingChat) {
+            if case .mealPlanDay(let day) = source {
+                RecipeChatSheet(day: day) { changed in
+                    // User edited the meal — refresh the recipe with the
+                    // new mealName from the server.
+                    if changed {
+                        Task {
+                            await streamGenerate(dayId: day.id)
+                        }
+                    }
+                }
+                .environment(auth)
+            }
+        }
+    }
+
+    private var floatingPill: some View {
+        Button { showingChat = true } label: {
+            HStack(spacing: 10) {
+                SCIcon("sparkle", size: 16, color: Theme.butter, weight: .bold)
+                Text("Ask about this recipe or swap it…")
+                    .font(Theme.sans(14, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                SCIcon("send", size: 16, color: .white)
+                    .frame(width: 36, height: 36)
+                    .background(Theme.terra)
+                    .clipShape(Circle())
+            }
+            .padding(.leading, 18)
+            .padding(.trailing, 8)
+            .frame(height: 56)
+            .background(Theme.ink)
+            .clipShape(Capsule())
+            .shadow(color: .black.opacity(0.35), radius: 15, y: 12)
+        }
+        .buttonStyle(.plain)
     }
 
     private var client: APIClient {
@@ -146,7 +193,9 @@ struct RecipeScreen: View {
                     errorCard(errorMessage)
                 }
                 recipeBody
-                Color.clear.frame(height: 32)
+                // Bottom clearance — needs to be tall enough that the
+                // floating "Ask…" pill doesn't cover the last instruction.
+                Color.clear.frame(height: 110)
             }
         }
         // Intentionally NOT .ignoresSafeArea(edges: .top): the hero used to
@@ -159,7 +208,27 @@ struct RecipeScreen: View {
         Rectangle()
             .fill(Theme.elev)
             .frame(height: 380)
-            .overlay { FoodImage(url: heroImage) }
+            .overlay {
+                // Generated image (from regenerate-image) takes precedence
+                // over the stock-photo lookup — the lookup is only a
+                // fallback while the user hasn't asked for a real photo yet.
+                if let generatedImage {
+                    Image(uiImage: generatedImage)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    FoodImage(url: heroImage)
+                }
+                if isGeneratingImage {
+                    Color.black.opacity(0.45)
+                    VStack(spacing: 8) {
+                        ProgressView().tint(.white)
+                        Text("Generating photo…")
+                            .font(Theme.sans(13, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
+                }
+            }
             .clipped()
             .overlay {
                 LinearGradient(
@@ -366,9 +435,63 @@ struct RecipeScreen: View {
                 }
                 .disabled(isSaving || saved || content.isEmpty || isStreaming)
                 .opacity(content.isEmpty || isStreaming ? 0.6 : 1)
+                heroButton("photo") {
+                    Task { await regenerateImage() }
+                }
+                .disabled(isGeneratingImage || isStreaming || promptForImage.isEmpty)
+                .opacity(promptForImage.isEmpty ? 0.6 : 1)
             }
         }
         .padding(.horizontal, 14)
+    }
+
+    /// The prompt we send to `/api/kitchen/regenerate-image`. Prefer the
+    /// model-emitted `imagePrompt` (set when the recipe stream finishes),
+    /// fall back to the cookbook recipe's stored prompt, and finally to the
+    /// recipe title — better than nothing for casual taps.
+    private var promptForImage: String {
+        if let p = imagePrompt, !p.isEmpty { return p }
+        if case .cookbook(let recipe) = source,
+           let p = recipe.imagePrompt, !p.isEmpty {
+            return p
+        }
+        return title
+    }
+
+    @MainActor
+    private func regenerateImage() async {
+        guard !isGeneratingImage, !promptForImage.isEmpty else { return }
+        isGeneratingImage = true
+        defer { isGeneratingImage = false }
+        struct Body: Encodable { let prompt: String }
+        struct Response: Decodable { let imageUrl: String }
+        do {
+            let resp: Response = try await client.post(
+                "/api/kitchen/regenerate-image",
+                Body(prompt: promptForImage)
+            )
+            // The server emits a "data:image/png;base64,<b64>" URL.
+            // Decode it into a UIImage and replace the hero.
+            if let img = decodeDataURL(resp.imageUrl) {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    generatedImage = img
+                }
+            } else {
+                errorMessage = "Got an image but couldn't read it."
+            }
+        } catch let e as APIError where e.isBenignCancellation {
+            // Quietly ignore — view went away.
+        } catch {
+            errorMessage = "Image: \(error.localizedDescription)"
+        }
+    }
+
+    private func decodeDataURL(_ s: String) -> UIImage? {
+        guard let comma = s.firstIndex(of: ","),
+              let data = Data(base64Encoded: String(s[s.index(after: comma)...])) else {
+            return nil
+        }
+        return UIImage(data: data)
     }
 
     /// Persist the current recipe to the cookbook via
@@ -411,7 +534,267 @@ struct RecipeScreen: View {
         .buttonStyle(.plain)
     }
 
-    // The "Ask about this recipe…" floating pill was removed in the
-    // dead-button cull (B-08). It will come back when
-    // /api/kitchen/recipe-message is wired.
+}
+
+// MARK: - Recipe chat sheet
+
+/// Per-recipe chat — the modal panel that the floating "Ask…" pill opens.
+/// Talks to `POST /api/kitchen/recipe-message` (SSE). If the model calls
+/// the `update_meal` tool, the response includes `updatedMeal` and the
+/// sheet calls `onDismiss(true)` so the parent can refresh the recipe.
+struct RecipeChatSheet: View {
+    let day: MealPlanDay
+    var onDismiss: (_ mealChanged: Bool) -> Void = { _ in }
+
+    @Environment(AuthModel.self) private var auth
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var messages: [Msg] = []
+    @State private var draft: String = ""
+    @State private var streamingContent: String = ""
+    @State private var isStreaming = false
+    @State private var lastError: String?
+    @State private var mealChanged = false
+
+    private struct Msg: Identifiable {
+        let id = UUID()
+        let role: String   // "user" | "assistant"
+        var text: String
+    }
+
+    private var client: APIClient {
+        APIClient(baseURL: AppConfig.backendBaseURL, auth: auth)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            messageList
+            composer
+        }
+        .background(Theme.bg)
+        .interactiveDismissDisabled(isStreaming)
+    }
+
+    private var header: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(day.mealName)
+                    .font(Theme.sans(15, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+                    .lineLimit(1)
+                Spacer()
+                Button {
+                    onDismiss(mealChanged)
+                    dismiss()
+                } label: {
+                    SCIcon("close", size: 18, color: Theme.ink)
+                        .frame(width: 36, height: 36)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            Hairline()
+        }
+    }
+
+    @ViewBuilder
+    private var messageList: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    if messages.isEmpty && !isStreaming {
+                        emptyHint
+                    }
+                    ForEach(messages) { m in
+                        bubble(role: m.role, text: m.text, streaming: false)
+                    }
+                    if isStreaming || !streamingContent.isEmpty {
+                        bubble(role: "assistant", text: streamingContent, streaming: isStreaming)
+                    }
+                    if let err = lastError {
+                        Text(err)
+                            .font(Theme.sans(13))
+                            .foregroundStyle(.red)
+                    }
+                    Color.clear.frame(height: 1).id("BOTTOM")
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+            }
+            .onChange(of: streamingContent) { _, _ in
+                withAnimation(.easeOut(duration: 0.15)) {
+                    proxy.scrollTo("BOTTOM", anchor: .bottom)
+                }
+            }
+            .onChange(of: messages.count) { _, _ in
+                withAnimation(.easeOut(duration: 0.15)) {
+                    proxy.scrollTo("BOTTOM", anchor: .bottom)
+                }
+            }
+        }
+    }
+
+    private var emptyHint: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Edit or swap this meal.")
+                .font(Theme.display(18, weight: .medium))
+                .foregroundStyle(Theme.ink)
+            Text("Try: \"swap with sheet-pan chicken\", \"make it vegetarian\", or ask a question about an ingredient.")
+                .font(Theme.sans(13))
+                .foregroundStyle(Theme.ink2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 8)
+    }
+
+    @ViewBuilder
+    private func bubble(role: String, text: String, streaming: Bool) -> some View {
+        if role == "user" {
+            HStack {
+                Spacer(minLength: 40)
+                Text(text)
+                    .font(Theme.sans(14.5))
+                    .foregroundStyle(Theme.bg)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 11)
+                    .background(Theme.ink)
+                    .clipShape(UnevenRoundedRectangle(cornerRadii: .init(
+                        topLeading: 18, bottomLeading: 18, bottomTrailing: 6, topTrailing: 18)))
+            }
+        } else {
+            HStack(alignment: .top, spacing: 0) {
+                Text(text.isEmpty && streaming ? " " : text)
+                    .font(Theme.sans(14.5))
+                    .foregroundStyle(Theme.ink)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .background(Theme.card)
+            .clipShape(UnevenRoundedRectangle(cornerRadii: .init(
+                topLeading: 18, bottomLeading: 6, bottomTrailing: 18, topTrailing: 18)))
+            .overlay(
+                UnevenRoundedRectangle(cornerRadii: .init(
+                    topLeading: 18, bottomLeading: 6, bottomTrailing: 18, topTrailing: 18))
+                    .strokeBorder(Theme.hairline2, lineWidth: 1)
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.trailing, 40)
+        }
+    }
+
+    private var composer: some View {
+        VStack(spacing: 0) {
+            Hairline()
+            HStack(spacing: 8) {
+                TextField("Edit or ask about \(day.mealName)…", text: $draft, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(Theme.sans(14))
+                    .foregroundStyle(Theme.ink)
+                    .padding(.leading, 16)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineLimit(1...4)
+                    .submitLabel(.send)
+                    .textInputAutocapitalization(.sentences)
+                    .onSubmit { if canSend { Task { await send() } } }
+                    .disabled(isStreaming)
+                Button { Task { await send() } } label: {
+                    SCIcon("send", size: 16, color: .white)
+                        .frame(width: 36, height: 36)
+                        .background(canSend ? Theme.terra : Theme.ink4)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSend)
+                .padding(.trailing, 6)
+            }
+            .frame(minHeight: 56)
+            .background(Theme.card)
+            .clipShape(RoundedRectangle(cornerRadius: 28))
+            .overlay(RoundedRectangle(cornerRadius: 28).strokeBorder(Theme.hairline2, lineWidth: 1))
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 10)
+        }
+        .background(Theme.bg)
+    }
+
+    private var canSend: Bool {
+        !isStreaming && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    // MARK: Send + stream
+
+    private struct SendBody: Encodable {
+        let content: String
+        let dayId: Int
+        let mealName: String
+        let dayName: String
+    }
+
+    private struct ChatChunk: Decodable {
+        let content: String?
+        let done: Bool?
+        let error: String?
+        let updatedMeal: UpdatedMeal?
+        struct UpdatedMeal: Decodable {
+            let mealName: String
+            let notes: String?
+        }
+    }
+
+    @MainActor
+    private func send() async {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        messages.append(Msg(role: "user", text: text))
+        draft = ""
+        lastError = nil
+        streamingContent = ""
+        isStreaming = true
+
+        let body = SendBody(
+            content: text,
+            dayId: day.id,
+            mealName: day.mealName,
+            dayName: DateUtil.dayName(day.dayOfWeek)
+        )
+        let decoder = JSONDecoder()
+        do {
+            for try await event in client.stream(path: "/api/kitchen/recipe-message", body: body) {
+                guard let chunk = try? decoder.decode(
+                    ChatChunk.self, from: Data(event.data.utf8)
+                ) else { continue }
+                if let delta = chunk.content {
+                    streamingContent += delta
+                } else if let err = chunk.error {
+                    lastError = err
+                } else if chunk.done == true {
+                    if chunk.updatedMeal != nil {
+                        mealChanged = true
+                    }
+                    break
+                }
+            }
+        } catch let e as APIError where e.isBenignCancellation {
+            // No-op
+        } catch {
+            lastError = error.localizedDescription
+        }
+
+        if !streamingContent.isEmpty {
+            messages.append(Msg(role: "assistant", text: streamingContent))
+        }
+        streamingContent = ""
+        isStreaming = false
+
+        // If the meal was changed, close the sheet immediately so the
+        // parent can re-stream the recipe with the new mealName.
+        if mealChanged {
+            onDismiss(true)
+            dismiss()
+        }
+    }
 }

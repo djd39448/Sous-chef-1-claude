@@ -1,10 +1,13 @@
 import SwiftUI
 
-/// The Plan tab — this week's meal plan, with a link to the calendar.
+/// The Plan tab — a meal plan for whatever week the user is viewing,
+/// with prev/next arrows to flip weeks and a link to the calendar.
 ///
-/// Wired to `GET /api/kitchen/meal-plan` (MealPlanWithDays?). Loading,
-/// empty, and error states render in the meal-rows region; the NavBar
-/// and shopping summary stay in place.
+/// Wired to `GET /api/kitchen/week/{weekStartDate}` (returns
+/// `WeekResponse`). The screen owns a `currentWeek` Monday string that
+/// the arrows shift by ±7 days; each shift refetches. Loading/empty/error
+/// states render in the meal-rows region; the NavBar and shopping
+/// summary stay in place.
 struct PlanScreen: View {
     var goToTab: (Tab) -> Void = { _ in }
     var openRecipe: (RecipeSource) -> Void = { _ in }
@@ -12,6 +15,7 @@ struct PlanScreen: View {
     @Environment(AuthModel.self) private var auth
     @State private var showCalendar = false
     @State private var loadState: LoadState = .loading
+    @State private var currentWeek: String = DateUtil.todaysMondayString()
 
     private enum LoadState {
         case loading
@@ -25,10 +29,6 @@ struct PlanScreen: View {
                 NavBar(
                     largeTitle: "Meal Plan",
                     leading: AnyView(IconButton(icon: "calendar") { showCalendar = true })
-                    // Trailing sparkle (regenerate) removed in the dead-button
-                    // cull — the chat is already the canonical way to ask for
-                    // a new plan, and a button that does nothing is worse than
-                    // no button at all.
                 )
                 weekSelector
                 content
@@ -48,8 +48,8 @@ struct PlanScreen: View {
         loadState = .loading
         let client = APIClient(baseURL: AppConfig.backendBaseURL, auth: auth)
         do {
-            let plan: MealPlanWithDays? = try await client.get("/api/kitchen/meal-plan")
-            loadState = .loaded(plan: plan)
+            let resp: WeekResponse = try await client.get("/api/kitchen/week/\(currentWeek)")
+            loadState = .loaded(plan: resp.mealPlan)
         } catch let e as APIError where e.isBenignCancellation {
             return
         } catch {
@@ -64,29 +64,49 @@ struct PlanScreen: View {
     // MARK: Week selector
 
     private var weekSelector: some View {
-        // Week-shift arrows removed (B-11) — they were never wired and the
-        // backend doesn't yet support fetching a different week's plan. Add
-        // them back when /api/kitchen/meal-plan accepts a weekStart query.
-        Text(weekRangeText)
-            .font(Theme.sans(14, weight: .semibold))
-            .foregroundStyle(Theme.ink)
-            .lineLimit(1)
-            .frame(maxWidth: .infinity)
-            .frame(height: 40)
+        HStack(spacing: 10) {
+            Button { shiftWeek(-1) } label: { circleArrow("chevL") }
+                .buttonStyle(.plain)
+                .disabled(isLoading)
+            Text(weekRangeText)
+                .font(Theme.sans(14, weight: .semibold))
+                .foregroundStyle(Theme.ink)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+                .frame(height: 40)
+                .background(Theme.card)
+                .clipShape(Capsule())
+                .overlay(Capsule().strokeBorder(Theme.hairline2, lineWidth: 1))
+            Button { shiftWeek(+1) } label: { circleArrow("chevR") }
+                .buttonStyle(.plain)
+                .disabled(isLoading)
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 16)
+    }
+
+    private func circleArrow(_ icon: String) -> some View {
+        SCIcon(icon, size: 18, color: Theme.ink)
+            .frame(width: 36, height: 36)
             .background(Theme.card)
-            .clipShape(Capsule())
-            .overlay(Capsule().strokeBorder(Theme.hairline2, lineWidth: 1))
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
+            .clipShape(Circle())
+            .overlay(Circle().strokeBorder(Theme.hairline2, lineWidth: 1))
+    }
+
+    private var isLoading: Bool {
+        if case .loading = loadState { return true } else { return false }
+    }
+
+    private func shiftWeek(_ delta: Int) {
+        currentWeek = DateUtil.shiftMonday(currentWeek, weeks: delta)
+        Task { await load() }
     }
 
     private var weekRangeText: String {
-        guard let plan = plan else { return "This week" }
-        return DateUtil.weekRangeString(weekStart: plan.weekStartDate)
+        // Drive the label off `currentWeek` (not the plan) so the arrows
+        // shift the label even when the new week has no plan yet.
+        DateUtil.weekRangeString(weekStart: currentWeek)
     }
-
-    // circleButton(_:) was used for the dead week-shift arrows (B-11) — both
-    // removed in the same change.
 
     // MARK: Content (loading / empty / loaded / error)
 

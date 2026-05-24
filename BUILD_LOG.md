@@ -697,3 +697,57 @@ Second pass over `BUGS.md` — knocks out 15 more findings.
   navigated nowhere. Month nav is the row below.
 
 Verified: `xcodebuild iphonesimulator` clean, zero warnings.
+
+---
+
+## 2026-05-23 · Missing-feature port: cookbook search, week nav, image gen, recipe chat
+
+Real-device testing on Dave's iPhone 15 flagged six features the
+original Replit web app had that the port was missing. The earlier
+dead-button cull had pulled three of them (week arrows, swap meal,
+cookbook search) thinking they were unfinished UI — they were
+actually unfinished *features* worth porting properly. This pass
+adds them back, wired correctly.
+
+- **Cookbook search.** Re-added the text field above the grid.
+  Filter is client-side substring on `title` OR `content`,
+  case-insensitive — matches the original web app's `useMemo`
+  filter exactly. The "LAST SAVED" featured card hides while a
+  search is active so the result set stays focused.
+
+- **Plan week navigation.** Re-added prev / next arrows around the
+  week-range pill. Drives a `currentWeek` Monday string that the
+  arrows shift by ±7 days; refetches via the existing
+  `GET /api/kitchen/week/{weekStartDate}` endpoint, which already
+  returns both `mealPlan` and `shoppingList` for any past or
+  future week. Empty weeks render the existing "Plan my week" CTA.
+  A new `WeekResponse` DTO wraps the response. `DateUtil.shiftMonday`
+  is the new helper.
+
+- **Image generation.** Wired the Recipe screen's photo button to
+  `POST /api/kitchen/regenerate-image` (the backend handler was
+  already in place — only the iOS call was missing). The endpoint
+  returns a `data:image/png;base64,…` URL; the screen decodes it
+  into a `UIImage` and swaps the hero with a crossfade. While
+  generating, the hero shows a dimmer + spinner. Prompt priority:
+  model-emitted `imagePrompt` from the recipe stream, then the
+  cookbook recipe's stored prompt, then the title as a last
+  resort.
+
+- **Recipe chat.** Re-added the floating "Ask about this recipe or
+  swap it…" pill, this time wired to the existing
+  `POST /api/kitchen/recipe-message` SSE endpoint (also already in
+  place). Tapping the pill opens a `RecipeChatSheet` — a small
+  chat UI scoped to one meal. The user can ask questions about
+  ingredients, ask for substitutions, or request a swap; the
+  backend's `update_meal` tool rewrites the `meal_plan_days` row
+  when the model decides a swap is appropriate. After a confirmed
+  swap, the sheet dismisses and the Recipe screen re-streams the
+  new recipe automatically. Per the original, this single feature
+  also covers "edit recipe" and "edit plan on the weekly view" —
+  both flow through the same conversational interface.
+
+Verified: `xcodebuild iphonesimulator` clean, zero warnings. The
+backend already had every endpoint these features need
+(`/week/{date}`, `/regenerate-image`, `/recipe-message`) — the
+audit had just left the iOS side unwired.

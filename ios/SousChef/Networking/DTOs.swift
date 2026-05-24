@@ -140,3 +140,11 @@ struct ShoppingListWithItems: Codable, Identifiable {
     let createdAt: Date
     var items: [ShoppingItem]
 }
+
+/// `GET /api/kitchen/week/{weekStartDate}` — both the meal plan AND the
+/// shopping list for a specific Monday-anchored week. Either field is
+/// nullable when the user hasn't generated that resource yet.
+struct WeekResponse: Codable {
+    let mealPlan: MealPlanWithDays?
+    let shoppingList: ShoppingListWithItems?
+}

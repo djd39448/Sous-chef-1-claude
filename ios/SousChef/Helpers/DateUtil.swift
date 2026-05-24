@@ -81,6 +81,20 @@ enum DateUtil {
     /// need to do their own arithmetic (e.g. the calendar grid).
     static func dateFromISO(_ s: String) -> Date? { parseUTCDate(s) }
 
+    /// Shift a `YYYY-MM-DD` Monday by `weeks` (negative goes back). Returns
+    /// a fresh `YYYY-MM-DD` string in UTC. The Plan view's prev/next
+    /// arrows live on this helper.
+    static func shiftMonday(_ monday: String, weeks: Int) -> String {
+        guard let d = parseUTCDate(monday),
+              let next = utcCalendar.date(byAdding: .day, value: weeks * 7, to: d) else {
+            return monday
+        }
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = TimeZone(identifier: "UTC")
+        return f.string(from: next)
+    }
+
     /// The UTC Gregorian calendar — match the backend's day math.
     static var utc: Calendar { utcCalendar }
 
