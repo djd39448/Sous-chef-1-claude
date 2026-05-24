@@ -113,6 +113,19 @@ struct MealPlanWithDays: Codable, Identifiable {
     let days: [MealPlanDay]
 }
 
+/// `GET /api/kitchen/ingredient-suggestions` — autocomplete candidates
+/// for the cookbook ingredient helper. Keys are snake_case to match
+/// the original web app and the Go store struct.
+struct IngredientSuggestion: Codable, Identifiable {
+    var id: String { canonicalName }
+    let canonicalName: String
+    let displayName: String
+    enum CodingKeys: String, CodingKey {
+        case canonicalName = "canonical_name"
+        case displayName = "display_name"
+    }
+}
+
 /// `GET /api/kitchen/cookbook[/{id}]` — a saved recipe. `thumbnailUrl`
 /// is a persisted `data:image/png;base64,…` URL (column name
 /// `thumbnail_url` to match the original web app).

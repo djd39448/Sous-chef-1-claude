@@ -1,19 +1,32 @@
 import SwiftUI
 
-/// The Calendar screen — month view of which days have plans or lists.
+/// The Calendar screen — Week list OR Month grid view of plans + lists.
 /// Pushed from the Plan tab.
 ///
-/// Wired to `GET /api/kitchen/calendar`. The user can flip between
-/// the displayed month with chevL / chevR; the grid marks days that
-/// fall inside any plan's Mon-Sun week (terra dot) or any list's week
-/// (sage dot). Today is highlighted.
+/// `viewMode = .week` (the default, matching the original web app)
+/// shows a vertical list of the current week's 7 meal-plan days plus
+/// a shopping-list summary card. `viewMode = .month` shows a grid that
+/// marks days whose week has a plan (terra dot) or a list (sage dot).
 struct CalendarScreen: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AuthModel.self) private var auth
 
+    @State private var viewMode: ViewMode = .week
+    @State private var currentWeek: String = DateUtil.todaysMondayString()
     @State private var mode: Mode = .plans
     @State private var displayedMonth: Date = Self.firstOfMonth(Date())
     @State private var loadState: LoadState = .loading
+    /// Loaded by the Week view — meal plan + shopping list for the
+    /// currently-shown week. Nil while loading or when the user is in
+    /// month mode and hasn't fetched a week yet.
+    @State private var weekData: WeekResponse?
+    @State private var isWeekLoading = false
+    /// Sheet driver for tapping a meal-plan day on the week list.
+    @State private var openDay: MealPlanDay?
+
+    enum ViewMode: String, CaseIterable {
+        case week, month
+    }
 
     private enum Mode: String, CaseIterable {
         case plans, lists
@@ -31,23 +44,256 @@ struct CalendarScreen: View {
         ScrollView {
             VStack(spacing: 0) {
                 NavBar(
-                    largeTitle: monthTitle,
-                    leading: AnyView(IconButton(icon: "chevL") { dismiss() })
-                    // Trailing chevR removed (B-20) — it duplicated nothing
-                    // and went nowhere. Month navigation is the chev row
-                    // below the NavBar.
+                    largeTitle: navTitle,
+                    leading: AnyView(IconButton(icon: "chevL") { dismiss() }),
+                    trailing: AnyView(viewToggle)
                 )
-                monthNav
-                segmented
-                weekdayHeader
-                grid
-                dayDetail
+                topNav
+                if viewMode == .month {
+                    segmented
+                    weekdayHeader
+                    grid
+                    dayDetail
+                } else {
+                    weekViewBody
+                }
             }
         }
         .background(Theme.bg)
         .navigationBarHidden(true)
-        .task { await load() }
-        .refreshable { await load() }
+        .task {
+            await load()
+            await loadWeek()
+        }
+        .refreshable {
+            await load()
+            await loadWeek()
+        }
+        .sheet(item: $openDay) { day in
+            RecipeScreen(source: .mealPlanDay(day))
+                .environment(auth)
+        }
+    }
+
+    private var navTitle: String {
+        viewMode == .month ? monthTitle : weekTitle
+    }
+
+    private var weekTitle: String {
+        DateUtil.weekRangeString(weekStart: currentWeek)
+    }
+
+    private var viewToggle: some View {
+        HStack(spacing: 4) {
+            toggleButton(icon: "filter", mode: .week)  // list icon stand-in
+            toggleButton(icon: "calendar", mode: .month)
+        }
+    }
+
+    private func toggleButton(icon: String, mode: ViewMode) -> some View {
+        Button { viewMode = mode } label: {
+            SCIcon(icon, size: 16, color: viewMode == mode ? .white : Theme.ink2)
+                .frame(width: 32, height: 32)
+                .background(viewMode == mode ? Theme.terra : Theme.elev)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var topNav: some View {
+        HStack(spacing: 16) {
+            Button {
+                if viewMode == .week {
+                    shiftWeek(-1)
+                } else {
+                    shiftMonth(-1)
+                }
+            } label: {
+                SCIcon("chevL", size: 18, color: Theme.ink)
+                    .frame(width: 36, height: 36)
+                    .background(Theme.card)
+                    .clipShape(Circle())
+                    .overlay(Circle().strokeBorder(Theme.hairline2, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            Spacer()
+            Button {
+                if viewMode == .week {
+                    currentWeek = DateUtil.todaysMondayString()
+                    Task { await loadWeek() }
+                } else {
+                    displayedMonth = Self.firstOfMonth(Date())
+                }
+            } label: {
+                Text(viewMode == .week ? "This week" : "Today")
+                    .font(Theme.sans(13, weight: .semibold))
+                    .foregroundStyle(Theme.terra)
+            }
+            .buttonStyle(.plain)
+            Spacer()
+            Button {
+                if viewMode == .week {
+                    shiftWeek(+1)
+                } else {
+                    shiftMonth(+1)
+                }
+            } label: {
+                SCIcon("chevR", size: 18, color: Theme.ink)
+                    .frame(width: 36, height: 36)
+                    .background(Theme.card)
+                    .clipShape(Circle())
+                    .overlay(Circle().strokeBorder(Theme.hairline2, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
+    }
+
+    private func shiftWeek(_ delta: Int) {
+        currentWeek = DateUtil.shiftMonday(currentWeek, weeks: delta)
+        Task { await loadWeek() }
+    }
+
+    // MARK: Week view
+
+    @ViewBuilder
+    private var weekViewBody: some View {
+        if isWeekLoading {
+            weekLoading
+        } else if let plan = weekData?.mealPlan {
+            VStack(spacing: 14) {
+                weekMealPlanCard(plan)
+                if let list = weekData?.shoppingList, !list.items.isEmpty {
+                    weekShoppingCard(list)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 24)
+        } else {
+            weekEmpty
+        }
+    }
+
+    private func weekMealPlanCard(_ plan: MealPlanWithDays) -> some View {
+        let order = [1, 2, 3, 4, 5, 6, 0]
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                SCIcon("calendar", size: 16, color: Theme.terra)
+                Text("Meal Plan")
+                    .font(Theme.sans(15, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+            }
+            .padding(.bottom, 4)
+            VStack(spacing: 6) {
+                ForEach(Array(order.enumerated()), id: \.offset) { _, dow in
+                    let meal = plan.days.first { $0.dayOfWeek == dow }
+                    weekDayRow(dow: dow, plan: plan, meal: meal)
+                }
+            }
+        }
+        .padding(14)
+        .cardSurface(18)
+    }
+
+    private func weekDayRow(dow: Int, plan: MealPlanWithDays, meal: MealPlanDay?) -> some View {
+        Button {
+            if let meal { openDay = meal }
+        } label: {
+            HStack(spacing: 12) {
+                VStack(spacing: 0) {
+                    Text(DateUtil.dayName(dow).prefix(3).uppercased())
+                        .font(.system(size: 10, weight: .semibold))
+                        .tracking(0.4)
+                        .foregroundStyle(Theme.ink3)
+                    Text(DateUtil.dayNumber(for: dow, weekStart: plan.weekStartDate))
+                        .font(Theme.display(18, weight: .medium))
+                        .foregroundStyle(Theme.ink)
+                }
+                .frame(width: 44)
+                if let meal {
+                    Text(meal.mealName)
+                        .font(Theme.sans(14, weight: .medium))
+                        .foregroundStyle(Theme.ink)
+                        .lineLimit(1)
+                } else {
+                    Text("No meal planned")
+                        .font(Theme.sans(13))
+                        .foregroundStyle(Theme.ink3)
+                }
+                Spacer(minLength: 0)
+                if meal != nil {
+                    SCIcon("chevR", size: 14, color: Theme.ink4)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(meal == nil ? Color.clear : Theme.elev.opacity(0.6))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .disabled(meal == nil)
+    }
+
+    private func weekShoppingCard(_ list: ShoppingListWithItems) -> some View {
+        let checked = list.items.filter { $0.checked == 1 }.count
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                SCIcon("cart", size: 16, color: Theme.sage)
+                Text("Shopping List")
+                    .font(Theme.sans(15, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+            }
+            Text("\(checked) of \(list.items.count) items checked")
+                .font(Theme.sans(13))
+                .foregroundStyle(Theme.ink2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .cardSurface(18)
+    }
+
+    private var weekLoading: some View {
+        VStack(spacing: 10) {
+            ForEach(0..<7, id: \.self) { _ in
+                Rectangle()
+                    .fill(Theme.elev)
+                    .frame(height: 44)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        }
+        .padding(.horizontal, 16)
+        .redacted(reason: .placeholder)
+    }
+
+    private var weekEmpty: some View {
+        VStack(spacing: 8) {
+            Text("No meals planned")
+                .font(Theme.display(18, weight: .medium))
+                .foregroundStyle(Theme.ink)
+            Text("Go to the Plan tab to create a meal plan for this week.")
+                .font(Theme.sans(13))
+                .foregroundStyle(Theme.ink2)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.top, 40)
+        .padding(.horizontal, 24)
+    }
+
+    @MainActor
+    private func loadWeek() async {
+        guard viewMode == .week else { return }
+        isWeekLoading = true
+        defer { isWeekLoading = false }
+        let client = APIClient(baseURL: AppConfig.backendBaseURL, auth: auth)
+        do {
+            let resp: WeekResponse = try await client.get("/api/kitchen/week/\(currentWeek)")
+            weekData = resp
+        } catch let e as APIError where e.isBenignCancellation {
+            return
+        } catch {
+            weekData = nil
+        }
     }
 
     // MARK: Loading
@@ -81,36 +327,8 @@ struct CalendarScreen: View {
         return f.string(from: displayedMonth)
     }
 
-    private var monthNav: some View {
-        HStack(spacing: 16) {
-            Button { shiftMonth(-1) } label: {
-                SCIcon("chevL", size: 18, color: Theme.ink)
-                    .frame(width: 36, height: 36)
-                    .background(Theme.card)
-                    .clipShape(Circle())
-                    .overlay(Circle().strokeBorder(Theme.hairline2, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            Spacer()
-            Button { displayedMonth = Self.firstOfMonth(Date()) } label: {
-                Text("Today")
-                    .font(Theme.sans(13, weight: .semibold))
-                    .foregroundStyle(Theme.terra)
-            }
-            .buttonStyle(.plain)
-            Spacer()
-            Button { shiftMonth(+1) } label: {
-                SCIcon("chevR", size: 18, color: Theme.ink)
-                    .frame(width: 36, height: 36)
-                    .background(Theme.card)
-                    .clipShape(Circle())
-                    .overlay(Circle().strokeBorder(Theme.hairline2, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 12)
-    }
+    // monthNav was inlined into `topNav` once the Week/Month toggle
+    // landed — both views share the same prev/today/next row now.
 
     private func shiftMonth(_ delta: Int) {
         if let next = DateUtil.utc.date(byAdding: .month, value: delta, to: displayedMonth) {

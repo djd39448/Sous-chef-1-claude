@@ -28,6 +28,11 @@ struct APIClient {
         return try await request(path: path, method: "PATCH", body: data)
     }
 
+    func put<T: Decodable, B: Encodable>(_ path: String, _ body: B) async throws -> T {
+        let data = try JSONEncoder().encode(body)
+        return try await request(path: path, method: "PUT", body: data)
+    }
+
     func delete(_ path: String) async throws {
         _ = try await rawRequest(path: path, method: "DELETE", body: nil)
     }

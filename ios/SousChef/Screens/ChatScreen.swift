@@ -1,27 +1,34 @@
 import SwiftUI
 
-/// The Chat tab — conversational assistant with streaming replies.
+/// The Chat tab — conversational assistant with streaming replies and
+/// multi-conversation history.
 ///
 /// Wired to:
-///   - `GET  /api/kitchen/conversation` — load the user's default
-///     conversation with its history.
-///   - `POST /api/kitchen/message` — send a message and read the SSE
+///   - `GET  /api/kitchen/conversations` — list past conversations
+///     (sidebar).
+///   - `GET  /api/kitchen/conversation` — most-recent conversation
+///     (default on launch).
+///   - `GET  /api/kitchen/conversation/{id}` — load one by id (when the
+///     user picks a row in the sidebar).
+///   - `POST /api/kitchen/conversation/new` — start a fresh chat.
+///   - `POST /api/kitchen/message` — send a message, read the SSE
 ///     stream (`{content:…}` chunks, terminated by `{done:true}`).
 ///
-/// While the assistant reply streams, the in-progress text is rendered
-/// in a live bubble with a blinking cursor; on `done` the conversation
-/// is refetched so the persisted assistant message (and any
-/// tool-call side effects) become visible. On `error` the in-progress
-/// content is dropped and an inline error appears.
+/// The header shows the current conversation's title (auto-generated
+/// from the first user message — see backend `autoConversationTitle`).
+/// A history icon in the top-left opens a sheet listing all past
+/// conversations with a "New Chat" button.
 struct ChatScreen: View {
     @Environment(AuthModel.self) private var auth
 
     @State private var conversation: ConversationWithMessages?
+    @State private var conversations: [Conversation] = []
     @State private var draft = ""
     @State private var streamingContent = ""
     @State private var isStreaming = false
     @State private var loadState: LoadState = .loading
     @State private var lastError: String?
+    @State private var showHistory = false
 
     private enum LoadState { case loading, loaded, failed(String) }
 
@@ -36,6 +43,21 @@ struct ChatScreen: View {
         .background(Theme.bg)
         .navigationBarHidden(true)
         .task { await load() }
+        .sheet(isPresented: $showHistory) {
+            ConversationHistorySheet(
+                conversations: conversations,
+                currentID: conversation?.id,
+                onSelect: { id in
+                    showHistory = false
+                    Task { await loadConversation(id: id) }
+                },
+                onNewChat: {
+                    showHistory = false
+                    Task { await newConversation() }
+                }
+            )
+            .environment(auth)
+        }
     }
 
     private var client: APIClient {
@@ -44,10 +66,16 @@ struct ChatScreen: View {
 
     // MARK: Load history
 
+    /// Initial load: fetch the conversation list AND the most-recent
+    /// conversation in parallel. The list drives the sidebar; the
+    /// most-recent one is what the user sees on open.
     private func load() async {
         loadState = .loading
         do {
-            let c: ConversationWithMessages = try await client.get("/api/kitchen/conversation")
+            async let listTask: [Conversation] = client.get("/api/kitchen/conversations")
+            async let convTask: ConversationWithMessages = client.get("/api/kitchen/conversation")
+            conversations = (try? await listTask) ?? []
+            let c = try await convTask
             conversation = c
             loadState = .loaded
         } catch let e as APIError where e.isBenignCancellation {
@@ -57,35 +85,102 @@ struct ChatScreen: View {
         }
     }
 
+    /// Load one conversation by id — fires when the user picks a row in
+    /// the history sheet. Refreshes the list at the same time so the
+    /// chosen conversation can move to the top via updated_at.
+    @MainActor
+    private func loadConversation(id: Int) async {
+        loadState = .loading
+        do {
+            async let listTask: [Conversation] = client.get("/api/kitchen/conversations")
+            async let convTask: ConversationWithMessages = client.get("/api/kitchen/conversation/\(id)")
+            conversations = (try? await listTask) ?? conversations
+            let c = try await convTask
+            conversation = c
+            loadState = .loaded
+        } catch let e as APIError where e.isBenignCancellation {
+            return
+        } catch {
+            loadState = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Create a fresh conversation and switch to it. Title starts as
+    /// "Kitchen Chat" and is auto-renamed once the user sends a
+    /// message.
+    @MainActor
+    private func newConversation() async {
+        do {
+            struct Empty: Encodable {}
+            let conv: Conversation = try await client.post(
+                "/api/kitchen/conversation/new", Empty()
+            )
+            // Empty message list — fresh conversation.
+            conversation = ConversationWithMessages(
+                id: conv.id, userId: conv.userId, title: conv.title,
+                createdAt: conv.createdAt, updatedAt: conv.updatedAt,
+                messages: []
+            )
+            // Refresh the sidebar so the new chat appears.
+            if let list: [Conversation] = try? await client.get("/api/kitchen/conversations") {
+                conversations = list
+            }
+            loadState = .loaded
+        } catch let e as APIError where e.isBenignCancellation {
+            return
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
     // MARK: Header
 
     private var header: some View {
-        // Back chevron (B-17) and settings gear (B-18) removed in the
-        // dead-button cull: Chat lives in a tab — there's nowhere to go
-        // back to — and Settings doesn't exist yet (sign-out is in the
-        // Home avatar Menu). The status row stays centered.
+        // Top-left: history icon → opens the conversations sheet.
+        // Center: current conversation title + status. Top-right: new-chat icon.
         VStack(spacing: 0) {
-            VStack(spacing: 1) {
-                HStack(spacing: 6) {
-                    SCIcon("sparkle", size: 12, color: Theme.terraDeep, weight: .bold)
-                        .frame(width: 22, height: 22)
-                        .background(Theme.terraSoft)
-                        .clipShape(Circle())
-                    Text("Sous Chef")
-                        .font(Theme.sans(15, weight: .semibold))
-                        .foregroundStyle(Theme.ink)
+            HStack(alignment: .center) {
+                Button { showHistory = true } label: {
+                    SCIcon("filter", size: 18, color: Theme.ink)
+                        .frame(width: 36, height: 36)
                 }
-                Text(isStreaming ? "● Thinking…" : "● Online")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(isStreaming ? Theme.terra : Theme.sage)
+                .buttonStyle(.plain)
+                Spacer()
+                VStack(spacing: 1) {
+                    HStack(spacing: 6) {
+                        SCIcon("sparkle", size: 12, color: Theme.terraDeep, weight: .bold)
+                            .frame(width: 22, height: 22)
+                            .background(Theme.terraSoft)
+                            .clipShape(Circle())
+                        Text(currentTitle)
+                            .font(Theme.sans(15, weight: .semibold))
+                            .foregroundStyle(Theme.ink)
+                            .lineLimit(1)
+                    }
+                    Text(isStreaming ? "● Thinking…" : "● Online")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(isStreaming ? Theme.terra : Theme.sage)
+                }
+                Spacer()
+                Button { Task { await newConversation() } } label: {
+                    SCIcon("plus", size: 18, color: Theme.terra)
+                        .frame(width: 36, height: 36)
+                }
+                .buttonStyle(.plain)
             }
-            .frame(maxWidth: .infinity)
             .padding(.horizontal, 12)
             .padding(.top, 6)
             .padding(.bottom, 10)
             Hairline()
         }
         .background(Theme.bg)
+    }
+
+    /// Title shown in the header — prefers the loaded conversation's
+    /// title; falls back to "Sous Chef" before the first load lands.
+    private var currentTitle: String {
+        if let t = conversation?.title, !t.isEmpty { return t }
+        return "Sous Chef"
     }
 
     // MARK: Messages
@@ -361,5 +456,99 @@ private struct BlinkingCursor: View {
                     visible = false
                 }
             }
+    }
+}
+
+// MARK: - Conversation history sheet
+
+/// Modal list of past conversations + a "New Chat" CTA. Mirrors the
+/// sliding sidebar in the original web app. The current conversation
+/// is highlighted; tapping a row swaps to that conversation; "New
+/// Chat" creates one and switches.
+struct ConversationHistorySheet: View {
+    let conversations: [Conversation]
+    let currentID: Int?
+    var onSelect: (_ id: Int) -> Void = { _ in }
+    var onNewChat: () -> Void = {}
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 0) {
+                    Button(action: onNewChat) {
+                        HStack(spacing: 10) {
+                            SCIcon("plus", size: 16, color: .white)
+                                .frame(width: 28, height: 28)
+                                .background(Theme.terra)
+                                .clipShape(Circle())
+                            Text("New Chat")
+                                .font(Theme.sans(15, weight: .semibold))
+                                .foregroundStyle(Theme.ink)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 14)
+                    }
+                    .buttonStyle(.plain)
+                    Hairline()
+                    if conversations.isEmpty {
+                        Text("No conversations yet.")
+                            .font(Theme.sans(13))
+                            .foregroundStyle(Theme.ink3)
+                            .padding(.top, 40)
+                    } else {
+                        ForEach(conversations) { conv in
+                            Button { onSelect(conv.id) } label: {
+                                row(conv)
+                            }
+                            .buttonStyle(.plain)
+                            Hairline()
+                        }
+                    }
+                }
+            }
+            .background(Theme.bg)
+            .navigationTitle("Chats")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func row(_ conv: Conversation) -> some View {
+        let isCurrent = conv.id == currentID
+        return HStack(alignment: .top, spacing: 10) {
+            SCIcon("chat", size: 16, color: isCurrent ? Theme.terra : Theme.ink3)
+                .frame(width: 28, height: 28)
+                .background(isCurrent ? Theme.terraSoft : Theme.elev)
+                .clipShape(Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                Text(conv.title.isEmpty ? "Untitled chat" : conv.title)
+                    .font(Theme.sans(14, weight: isCurrent ? .semibold : .medium))
+                    .foregroundStyle(Theme.ink)
+                    .lineLimit(1)
+                Text(relativeUpdated(conv.updatedAt))
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.ink3)
+            }
+            Spacer(minLength: 0)
+            if isCurrent {
+                SCIcon("check", size: 14, color: Theme.terra)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(isCurrent ? Theme.terraSoft.opacity(0.3) : Color.clear)
+    }
+
+    private func relativeUpdated(_ date: Date) -> String {
+        let fmt = RelativeDateTimeFormatter()
+        fmt.unitsStyle = .short
+        return fmt.localizedString(for: date, relativeTo: Date())
     }
 }

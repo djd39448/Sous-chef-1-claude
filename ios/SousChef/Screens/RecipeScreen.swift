@@ -43,6 +43,12 @@ struct RecipeScreen: View {
     @State private var generatedImageURL: String?
     @State private var isGeneratingImage = false
     @State private var showingChat = false
+    /// Only used when `source` is `.cookbook` — opens the
+    /// CookbookEditScreen sheet from the pencil button.
+    @State private var showingEdit = false
+    /// Holds the latest CookbookRecipe after an edit so we can render
+    /// the fresh title/content without bouncing through the parent.
+    @State private var editedRecipe: CookbookRecipe?
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -69,6 +75,18 @@ struct RecipeScreen: View {
                             await streamGenerate(dayId: day.id)
                         }
                     }
+                }
+                .environment(auth)
+            }
+        }
+        .sheet(isPresented: $showingEdit) {
+            if case .cookbook(let recipe) = source {
+                CookbookEditScreen(recipe: editedRecipe ?? recipe) { updated in
+                    // Reflect the freshly-saved row in-place. Title +
+                    // content come from the response; thumbnailUrl is
+                    // preserved.
+                    editedRecipe = updated
+                    content = updated.content
                 }
                 .environment(auth)
             }
@@ -108,7 +126,11 @@ struct RecipeScreen: View {
     private var title: String {
         switch source {
         case .mealPlanDay(let day): return day.mealName
-        case .cookbook(let recipe): return recipe.title
+        case .cookbook(let recipe):
+            // Prefer the locally-edited copy so the title updates the
+            // moment Save lands, without waiting for the parent to
+            // refetch the cookbook list.
+            return editedRecipe?.title ?? recipe.title
         }
     }
 
@@ -431,19 +453,25 @@ struct RecipeScreen: View {
     // MARK: Top buttons
 
     private var topButtons: some View {
-        // Photo button removed (Dave's request): the sparkle placeholder
-        // on the hero IS the generate-image affordance — one workflow,
-        // not two. Once an image has been generated the user can clear
-        // it by swapping the meal via the chat sheet.
+        // Photo button removed: the sparkle placeholder on the hero IS
+        // the generate-image affordance. For .cookbook source we also
+        // show an edit pencil that opens the CookbookEditScreen.
         HStack {
             heroButton("chevL", action: onClose)
             Spacer()
-            heroButton(saved ? "bookmarkF" : "bookmark",
-                       color: saved ? Theme.terra : Theme.ink) {
-                Task { await saveToCookbook() }
+            HStack(spacing: 8) {
+                if case .cookbook = source {
+                    heroButton("edit", color: Theme.ink) {
+                        showingEdit = true
+                    }
+                }
+                heroButton(saved ? "bookmarkF" : "bookmark",
+                           color: saved ? Theme.terra : Theme.ink) {
+                    Task { await saveToCookbook() }
+                }
+                .disabled(isSaving || saved || content.isEmpty || isStreaming)
+                .opacity(content.isEmpty || isStreaming ? 0.6 : 1)
             }
-            .disabled(isSaving || saved || content.isEmpty || isStreaming)
-            .opacity(content.isEmpty || isStreaming ? 0.6 : 1)
         }
         .padding(.horizontal, 14)
     }
