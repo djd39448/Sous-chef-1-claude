@@ -122,10 +122,44 @@ struct CookbookEditScreen: View {
     }
 
     private func insertIngredient(_ line: String) {
-        // Append on its own line under the existing body, with a leading
-        // bullet so it slots into the Ingredients section naturally.
-        let prefix = content.hasSuffix("\n") || content.isEmpty ? "" : "\n"
-        content = content + prefix + "- " + line
+        // Try to slot the new bullet into the existing "## Ingredients"
+        // section: find the heading, walk to the end of that section
+        // (next `## ` heading or EOF), and insert just before that
+        // boundary so the bullet lands at the bottom of the ingredients.
+        // Falls back to appending at the end if no Ingredients heading
+        // is present (e.g. a recipe that was hand-typed without
+        // standard section headers).
+        let bullet = "- " + line
+        let body = content
+        let lower = body.lowercased()
+        guard let ingHeadingRange = lower.range(of: "## ingredients") else {
+            // No section to slot into — append at end.
+            let prefix = content.hasSuffix("\n") || content.isEmpty ? "" : "\n"
+            content = content + prefix + bullet
+            return
+        }
+        // Find where the Ingredients section ends: the next "\n## "
+        // (a fresh H2) after the heading, or end-of-body.
+        let afterHeading = body.index(ingHeadingRange.upperBound, offsetBy: 0)
+        let sectionEnd: String.Index = {
+            if let next = body.range(of: "\n## ", range: afterHeading..<body.endIndex) {
+                return next.lowerBound
+            }
+            return body.endIndex
+        }()
+        // Trim any trailing whitespace immediately before the boundary
+        // so the inserted line doesn't end up with a blank line gap.
+        var insertAt = sectionEnd
+        while insertAt > afterHeading {
+            let prev = body.index(before: insertAt)
+            if body[prev].isWhitespace { insertAt = prev } else { break }
+        }
+        let needsLeadingNewline = insertAt > body.startIndex
+            && body[body.index(before: insertAt)] != "\n"
+        let insertion = (needsLeadingNewline ? "\n" : "") + bullet
+        var updated = body
+        updated.insert(contentsOf: insertion, at: insertAt)
+        content = updated
     }
 
     // MARK: API

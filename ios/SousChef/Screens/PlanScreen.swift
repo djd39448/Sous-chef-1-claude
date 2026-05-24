@@ -537,5 +537,9 @@ struct PlanScreen: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 16)
         .padding(.top, 20)
+        // Extra clearance so the last button isn't hidden behind the
+        // custom tab bar (which sits in the safeAreaInset of MainView,
+        // ~83pt + bottom safe area).
+        .padding(.bottom, 24)
     }
 }

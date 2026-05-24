@@ -33,8 +33,11 @@ func (s *Server) handleGenerateRecipe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("generate-recipe: dayID=%d meal=%q user=%s", dayID, day.MealName, owner)
+
 	system := strings.ReplaceAll(recipeGenSystemPrompt, "<mealName>", day.MealName)
 	user := "Please give me the full recipe for " + day.MealName + "."
+	deltaCount := 0
 	result, err := s.ai.ChatStream(ctx, openai.ChatParams{
 		Model: "gpt-4.1",
 		Messages: []openai.Message{
@@ -42,10 +45,24 @@ func (s *Server) handleGenerateRecipe(w http.ResponseWriter, r *http.Request) {
 			{Role: "user", Content: user},
 		},
 	}, func(delta string) {
+		deltaCount++
 		sse.send(map[string]string{"content": delta})
 	})
 	if err != nil {
+		log.Printf("generate-recipe: dayID=%d ChatStream err: %v", dayID, err)
 		sse.sendError(err.Error())
+		return
+	}
+
+	log.Printf("generate-recipe: dayID=%d done deltas=%d contentLen=%d",
+		dayID, deltaCount, len(result.Content))
+	// Don't persist an empty recipe — that just locks the row into a
+	// "no content" state. Returning an error event lets the iOS client
+	// surface a retry CTA instead of the silent "didn't come through"
+	// placeholder.
+	if strings.TrimSpace(result.Content) == "" {
+		log.Printf("generate-recipe: dayID=%d EMPTY response (model returned no content)", dayID)
+		sse.sendError("The model returned an empty recipe. Try again, or ask for a different meal.")
 		return
 	}
 
