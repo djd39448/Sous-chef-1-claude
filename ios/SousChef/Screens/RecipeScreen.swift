@@ -239,6 +239,10 @@ struct RecipeScreen: View {
                     ],
                     startPoint: .top, endPoint: .bottom
                 )
+                // Gradient sits ABOVE the RecipeImage button — without
+                // this, taps on the sparkle placeholder land on the
+                // gradient instead of triggering regeneration.
+                .allowsHitTesting(false)
             }
             .overlay(alignment: .bottomLeading) {
                 if case .mealPlanDay = source {
@@ -255,6 +259,9 @@ struct RecipeScreen: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .padding(.leading, 20)
                     .padding(.bottom, 22)
+                    // Same hit-testing fix as the gradient — the badge
+                    // must not steal taps from the placeholder.
+                    .allowsHitTesting(false)
                 }
             }
     }
@@ -424,22 +431,19 @@ struct RecipeScreen: View {
     // MARK: Top buttons
 
     private var topButtons: some View {
+        // Photo button removed (Dave's request): the sparkle placeholder
+        // on the hero IS the generate-image affordance — one workflow,
+        // not two. Once an image has been generated the user can clear
+        // it by swapping the meal via the chat sheet.
         HStack {
             heroButton("chevL", action: onClose)
             Spacer()
-            HStack(spacing: 8) {
-                heroButton(saved ? "bookmarkF" : "bookmark",
-                           color: saved ? Theme.terra : Theme.ink) {
-                    Task { await saveToCookbook() }
-                }
-                .disabled(isSaving || saved || content.isEmpty || isStreaming)
-                .opacity(content.isEmpty || isStreaming ? 0.6 : 1)
-                heroButton("photo") {
-                    Task { await regenerateImage() }
-                }
-                .disabled(isGeneratingImage || isStreaming || promptForImage.isEmpty)
-                .opacity(promptForImage.isEmpty ? 0.6 : 1)
+            heroButton(saved ? "bookmarkF" : "bookmark",
+                       color: saved ? Theme.terra : Theme.ink) {
+                Task { await saveToCookbook() }
             }
+            .disabled(isSaving || saved || content.isEmpty || isStreaming)
+            .opacity(content.isEmpty || isStreaming ? 0.6 : 1)
         }
         .padding(.horizontal, 14)
     }
