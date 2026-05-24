@@ -66,6 +66,153 @@ func (s *Server) handleGetShoppingListByIdentifier(w http.ResponseWriter, r *htt
 	s.writeShoppingListWithItems(ctx, w, list)
 }
 
+// handleCreateShoppingItem serves POST /api/kitchen/shopping-item —
+// add a single manually-entered item. If `shoppingListId` is omitted
+// the item lands on the user's most-recent list; if no list exists
+// yet a 400 is returned.
+func (s *Server) handleCreateShoppingItem(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	userID := auth.UserID(ctx)
+
+	var body struct {
+		ShoppingListID *int    `json:"shoppingListId"`
+		Name           string  `json:"name"`
+		Quantity       *string `json:"quantity"`
+		Category       string  `json:"category"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	category := strings.TrimSpace(body.Category)
+	if category == "" {
+		category = "other"
+	}
+
+	// Resolve the target list. Either the caller specified one (auth-checked)
+	// or we use the user's most-recent.
+	var listID int
+	if body.ShoppingListID != nil {
+		list, err := s.store.GetShoppingListByID(ctx, userID, *body.ShoppingListID)
+		if writeStoreErr(w, err, "shopping list not found") {
+			return
+		}
+		listID = list.ID
+	} else {
+		list, err := s.store.GetMostRecentShoppingList(ctx, userID)
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusBadRequest, "no shopping list yet — generate one first")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		listID = list.ID
+	}
+
+	// Normalize quantity — empty string → nil to keep the column clean.
+	var qty *string
+	if body.Quantity != nil {
+		trimmed := strings.TrimSpace(*body.Quantity)
+		if trimmed != "" {
+			qty = &trimmed
+		}
+	}
+
+	item, err := s.store.InsertShoppingItem(ctx, listID, name, qty, category)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+// handleUpdateShoppingItem serves PUT /api/kitchen/shopping-item/{id} —
+// partial edit of name / quantity / category. (Toggling `checked`
+// stays on the PATCH endpoint to preserve existing iOS callers.)
+func (s *Server) handleUpdateShoppingItem(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id, ok := pathInt(r, "id")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid item id")
+		return
+	}
+	_, owner, err := s.store.GetShoppingItem(ctx, id)
+	if writeStoreErr(w, err, "shopping item not found") {
+		return
+	}
+	if owner != auth.UserID(ctx) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	var body struct {
+		Name     *string `json:"name"`
+		Quantity *string `json:"quantity"`
+		Category *string `json:"category"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if body.Name != nil {
+		trimmed := strings.TrimSpace(*body.Name)
+		if trimmed == "" {
+			writeError(w, http.StatusBadRequest, "name cannot be empty")
+			return
+		}
+		body.Name = &trimmed
+	}
+	if body.Category != nil {
+		trimmed := strings.TrimSpace(*body.Category)
+		if trimmed == "" {
+			body.Category = nil
+		} else {
+			body.Category = &trimmed
+		}
+	}
+
+	updated, err := s.store.UpdateShoppingItem(ctx, id, store.ShoppingItemUpdate{
+		Name:     body.Name,
+		Quantity: body.Quantity,
+		Category: body.Category,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+// handleDeleteShoppingItem serves DELETE /api/kitchen/shopping-item/{id}.
+func (s *Server) handleDeleteShoppingItem(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id, ok := pathInt(r, "id")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid item id")
+		return
+	}
+	_, owner, err := s.store.GetShoppingItem(ctx, id)
+	if writeStoreErr(w, err, "shopping item not found") {
+		return
+	}
+	if owner != auth.UserID(ctx) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if err := s.store.DeleteShoppingItem(ctx, id); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // handlePatchShoppingItem serves PATCH /api/kitchen/shopping-item/{id}.
 func (s *Server) handlePatchShoppingItem(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

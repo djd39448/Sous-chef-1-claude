@@ -61,7 +61,10 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/kitchen/shopping-lists", s.handleListShoppingLists)
 	mux.HandleFunc("GET /api/kitchen/shopping-list/{identifier}", s.handleGetShoppingListByIdentifier)
 	mux.HandleFunc("POST /api/kitchen/generate-shopping-list", s.handleGenerateShoppingList)
+	mux.HandleFunc("POST /api/kitchen/shopping-item", s.handleCreateShoppingItem)
 	mux.HandleFunc("PATCH /api/kitchen/shopping-item/{id}", s.handlePatchShoppingItem)
+	mux.HandleFunc("PUT /api/kitchen/shopping-item/{id}", s.handleUpdateShoppingItem)
+	mux.HandleFunc("DELETE /api/kitchen/shopping-item/{id}", s.handleDeleteShoppingItem)
 	mux.HandleFunc("DELETE /api/kitchen/shopping-items/checked", s.handleClearCheckedItems)
 
 	// Ingredients.

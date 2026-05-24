@@ -1,16 +1,30 @@
 import SwiftUI
 
-/// The Shopping tab — checkable list grouped by category.
+/// The Shopping tab — checkable list grouped by category, with a
+/// multi-week list picker and manual add/edit/delete per item.
 ///
 /// Wired to:
-///   - `GET    /api/kitchen/shopping-list`         (load)
-///   - `PATCH  /api/kitchen/shopping-item/{id}`    (toggle, optimistic)
-///   - `DELETE /api/kitchen/shopping-items/checked` (clear checked)
+///   - `GET    /api/kitchen/shopping-lists`          (sidebar listing)
+///   - `GET    /api/kitchen/shopping-list`           (most recent on
+///     first launch)
+///   - `GET    /api/kitchen/shopping-list/{ident}`   (pick a specific
+///     list — id or weekStart)
+///   - `POST   /api/kitchen/shopping-item`           (manual add)
+///   - `PATCH  /api/kitchen/shopping-item/{id}`      (toggle checked)
+///   - `PUT    /api/kitchen/shopping-item/{id}`      (edit name/qty/cat)
+///   - `DELETE /api/kitchen/shopping-item/{id}`      (single delete)
+///   - `DELETE /api/kitchen/shopping-items/checked`  (clear checked)
 struct ShoppingScreen: View {
     @Environment(AuthModel.self) private var auth
 
     @State private var list: ShoppingListWithItems?
+    @State private var allLists: [ShoppingList] = []
     @State private var loadState: LoadState = .loading
+    @State private var showListPicker = false
+    @State private var showItemEditor = false
+    /// When set, the item editor opens pre-filled with this item;
+    /// otherwise it's "add new."
+    @State private var editingItem: ShoppingItem?
 
     private enum LoadState {
         case loading
@@ -38,11 +52,14 @@ struct ShoppingScreen: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                NavBar(largeTitle: "Shopping")
-                // Filter and + icons removed in the dead-button cull (B-13).
-                // Items are added/modified via the chat's create_shopping_list
-                // tool; per-item filters need backend categorization we
-                // don't have yet.
+                NavBar(
+                    largeTitle: "Shopping",
+                    leading: AnyView(IconButton(icon: "filter") { showListPicker = true }),
+                    trailing: AnyView(IconButton(icon: "plus", color: Theme.terra) {
+                        editingItem = nil
+                        showItemEditor = true
+                    })
+                )
                 content
             }
         }
@@ -50,6 +67,27 @@ struct ShoppingScreen: View {
         .navigationBarHidden(true)
         .task { await load() }
         .refreshable { await load() }
+        .sheet(isPresented: $showListPicker) {
+            ShoppingListPickerSheet(
+                lists: allLists,
+                currentID: list?.id,
+                onSelect: { identifier in
+                    showListPicker = false
+                    Task { await loadList(identifier: identifier) }
+                }
+            )
+            .environment(auth)
+        }
+        .sheet(isPresented: $showItemEditor) {
+            ShoppingItemEditorSheet(
+                editing: editingItem,
+                listID: list?.id,
+                onSaved: {
+                    Task { await load() }
+                }
+            )
+            .environment(auth)
+        }
     }
 
     // MARK: Loading
@@ -61,7 +99,32 @@ struct ShoppingScreen: View {
     private func load() async {
         loadState = .loading
         do {
-            if let fetched: ShoppingListWithItems = try await client.get("/api/kitchen/shopping-list") {
+            async let listsTask: [ShoppingList] = client.get("/api/kitchen/shopping-lists")
+            async let currentTask: ShoppingListWithItems? = client.get("/api/kitchen/shopping-list")
+            allLists = (try? await listsTask) ?? []
+            if let fetched = try await currentTask {
+                list = fetched
+                loadState = .loaded
+            } else {
+                list = nil
+                loadState = .empty
+            }
+        } catch let e as APIError where e.isBenignCancellation {
+            return
+        } catch {
+            loadState = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Load a specific list by identifier (id digits or weekStart date).
+    /// Used by the list picker when the user switches weeks.
+    @MainActor
+    private func loadList(identifier: String) async {
+        loadState = .loading
+        do {
+            if let fetched: ShoppingListWithItems = try await client.get(
+                "/api/kitchen/shopping-list/\(identifier)"
+            ) {
                 list = fetched
                 loadState = .loaded
             } else {
@@ -222,6 +285,33 @@ struct ShoppingScreen: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button {
+                editingItem = item
+                showItemEditor = true
+            } label: {
+                Label("Edit", systemImage: "pencil")
+            }
+            Button(role: .destructive) {
+                Task { await deleteItem(item) }
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+    }
+
+    /// Permanently remove an item from the list. Optimistic — yanks it
+    /// locally before the request returns; restores on failure.
+    @MainActor
+    private func deleteItem(_ item: ShoppingItem) async {
+        guard let listIndex = list?.items.firstIndex(where: { $0.id == item.id }) else { return }
+        let removed = list!.items.remove(at: listIndex)
+        do {
+            try await client.delete("/api/kitchen/shopping-item/\(item.id)")
+        } catch {
+            // Restore.
+            list?.items.insert(removed, at: min(listIndex, list?.items.count ?? 0))
+        }
     }
 
     // MARK: Toggle + clear
@@ -322,6 +412,251 @@ struct ShoppingScreen: View {
                 .padding(.top, 24)
                 .padding(.bottom, 24)
             }
+        }
+    }
+}
+
+// MARK: - List picker
+
+/// Sheet listing all of the user's shopping lists. Tap one to switch
+/// the Shopping tab to that list. Mirrors the original web app's
+/// "Past Lists" picker.
+struct ShoppingListPickerSheet: View {
+    let lists: [ShoppingList]
+    let currentID: Int?
+    var onSelect: (_ identifier: String) -> Void = { _ in }
+
+    @Environment(AuthModel.self) private var auth
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                if lists.isEmpty {
+                    Text("No shopping lists yet.")
+                        .font(Theme.sans(13))
+                        .foregroundStyle(Theme.ink3)
+                        .padding(.top, 60)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(lists) { l in
+                            Button {
+                                onSelect("\(l.id)")
+                            } label: { row(l) }
+                            .buttonStyle(.plain)
+                            Hairline()
+                        }
+                    }
+                }
+            }
+            .background(Theme.bg)
+            .navigationTitle("Past Lists")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func row(_ l: ShoppingList) -> some View {
+        let isCurrent = l.id == currentID
+        return HStack(alignment: .top, spacing: 10) {
+            SCIcon("cart", size: 16, color: isCurrent ? Theme.terra : Theme.sage)
+                .frame(width: 28, height: 28)
+                .background(isCurrent ? Theme.terraSoft : Theme.elev)
+                .clipShape(Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                Text(l.name.isEmpty ? "Shopping List" : l.name)
+                    .font(Theme.sans(14, weight: isCurrent ? .semibold : .medium))
+                    .foregroundStyle(Theme.ink)
+                if let wk = l.weekStartDate {
+                    Text(DateUtil.weekRangeString(weekStart: wk)
+                        .replacingOccurrences(of: " · This week", with: " · This week"))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.ink3)
+                } else {
+                    Text(relativeCreated(l.createdAt))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.ink3)
+                }
+            }
+            Spacer(minLength: 0)
+            if isCurrent {
+                SCIcon("check", size: 14, color: Theme.terra)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(isCurrent ? Theme.terraSoft.opacity(0.3) : Color.clear)
+    }
+
+    private func relativeCreated(_ date: Date) -> String {
+        let fmt = RelativeDateTimeFormatter()
+        fmt.unitsStyle = .short
+        return fmt.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+// MARK: - Item editor
+
+/// Sheet for adding a new shopping item or editing an existing one.
+/// On save fires either `POST /api/kitchen/shopping-item` (add) or
+/// `PUT /api/kitchen/shopping-item/{id}` (edit) and dismisses.
+struct ShoppingItemEditorSheet: View {
+    let editing: ShoppingItem?
+    /// The list to add into when creating new items. Sent as
+    /// `shoppingListId` so the server doesn't have to guess.
+    let listID: Int?
+    var onSaved: () -> Void = {}
+
+    @Environment(AuthModel.self) private var auth
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var name: String = ""
+    @State private var quantity: String = ""
+    @State private var category: String = "other"
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    /// Same set as the Shopping list — keep in sync.
+    private let categories: [(key: String, label: String)] = [
+        ("produce", "Produce"),
+        ("meat", "Meat"),
+        ("seafood", "Seafood"),
+        ("dairy", "Dairy & Eggs"),
+        ("bakery", "Bakery"),
+        ("frozen", "Frozen"),
+        ("pantry", "Pantry"),
+        ("beverages", "Beverages"),
+        ("other", "Other"),
+    ]
+
+    private var client: APIClient {
+        APIClient(baseURL: AppConfig.backendBaseURL, auth: auth)
+    }
+
+    private var isAdd: Bool { editing == nil }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    field("NAME", placeholder: "Bell peppers", text: $name)
+                    field("QUANTITY (OPTIONAL)", placeholder: "2 lb", text: $quantity)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("CATEGORY")
+                            .font(.system(size: 11, weight: .bold))
+                            .tracking(0.6)
+                            .foregroundStyle(Theme.ink3)
+                        Picker("Category", selection: $category) {
+                            ForEach(categories, id: \.key) { c in
+                                Text(c.label).tag(c.key)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .padding(.horizontal, 8)
+                        .frame(height: 40)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.card)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.hairline2, lineWidth: 1))
+                    }
+                    if let err = errorMessage {
+                        Text(err)
+                            .font(Theme.sans(13))
+                            .foregroundStyle(.red)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 16)
+            }
+            .background(Theme.bg)
+            .navigationTitle(isAdd ? "Add Item" : "Edit Item")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }.disabled(isSaving)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(isSaving ? "Saving…" : "Save") { Task { await save() } }
+                        .fontWeight(.semibold)
+                        .disabled(isSaving || name.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+        }
+        .onAppear { seed() }
+        .interactiveDismissDisabled(isSaving)
+    }
+
+    private func field(_ label: String, placeholder: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.system(size: 11, weight: .bold))
+                .tracking(0.6)
+                .foregroundStyle(Theme.ink3)
+            TextField(placeholder, text: text)
+                .textFieldStyle(.plain)
+                .font(Theme.sans(15))
+                .foregroundStyle(Theme.ink)
+                .textInputAutocapitalization(.words)
+                .autocorrectionDisabled(false)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Theme.card)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.hairline2, lineWidth: 1))
+        }
+    }
+
+    private func seed() {
+        if let editing {
+            name = editing.name
+            quantity = editing.quantity ?? ""
+            category = editing.category.lowercased()
+        }
+    }
+
+    @MainActor
+    private func save() async {
+        isSaving = true
+        defer { isSaving = false }
+        errorMessage = nil
+        let nameT = name.trimmingCharacters(in: .whitespaces)
+        guard !nameT.isEmpty else { return }
+        let qtyT = quantity.trimmingCharacters(in: .whitespaces)
+        let qty: String? = qtyT.isEmpty ? nil : qtyT
+
+        do {
+            if let editing {
+                struct PutBody: Encodable {
+                    let name: String
+                    let quantity: String?
+                    let category: String
+                }
+                let _: ShoppingItem = try await client.put(
+                    "/api/kitchen/shopping-item/\(editing.id)",
+                    PutBody(name: nameT, quantity: qty, category: category)
+                )
+            } else {
+                struct PostBody: Encodable {
+                    let name: String
+                    let quantity: String?
+                    let category: String
+                    let shoppingListId: Int?
+                }
+                let _: ShoppingItem = try await client.post(
+                    "/api/kitchen/shopping-item",
+                    PostBody(name: nameT, quantity: qty, category: category, shoppingListId: listID)
+                )
+            }
+            onSaved()
+            dismiss()
+        } catch let e as APIError where e.isBenignCancellation {
+            return
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 }

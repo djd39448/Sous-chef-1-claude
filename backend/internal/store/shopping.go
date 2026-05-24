@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -195,4 +197,53 @@ func (s *Store) InsertShoppingItem(ctx context.Context, listID int, name string,
 		 VALUES ($1, $2, $3, $4) RETURNING `+shoppingItemCols,
 		listID, name, quantity, category)
 	return scanShoppingItem(row)
+}
+
+// ShoppingItemUpdate captures partial edits to a shopping_list_items
+// row from `PUT /shopping-item/{id}`. Nil pointers mean "don't touch."
+// `Quantity`'s pointer-to-pointer dance lets the caller send a literal
+// empty string (or null in JSON) to clear the column.
+type ShoppingItemUpdate struct {
+	Name     *string
+	Quantity *string // empty string clears
+	Category *string
+}
+
+// UpdateShoppingItem applies a partial update and returns the fresh row.
+// Builds a dynamic UPDATE so omitted fields keep their existing values.
+func (s *Store) UpdateShoppingItem(ctx context.Context, id int, u ShoppingItemUpdate) (ShoppingItem, error) {
+	sets := []string{}
+	args := []any{id}
+	if u.Name != nil {
+		sets = append(sets, "name = $"+strconv.Itoa(len(args)+1))
+		args = append(args, *u.Name)
+	}
+	if u.Quantity != nil {
+		sets = append(sets, "quantity = $"+strconv.Itoa(len(args)+1))
+		if *u.Quantity == "" {
+			args = append(args, nil)
+		} else {
+			args = append(args, *u.Quantity)
+		}
+	}
+	if u.Category != nil {
+		sets = append(sets, "category = $"+strconv.Itoa(len(args)+1))
+		args = append(args, *u.Category)
+	}
+	if len(sets) == 0 {
+		// No-op — return the current row.
+		item, _, err := s.GetShoppingItem(ctx, id)
+		return item, err
+	}
+	row := s.pool.QueryRow(ctx,
+		`UPDATE shopping_list_items SET `+strings.Join(sets, ", ")+
+			` WHERE id = $1 RETURNING `+shoppingItemCols, args...)
+	return scanShoppingItem(row)
+}
+
+// DeleteShoppingItem removes a single item by id.
+func (s *Store) DeleteShoppingItem(ctx context.Context, id int) error {
+	_, err := s.pool.Exec(ctx,
+		`DELETE FROM shopping_list_items WHERE id = $1`, id)
+	return err
 }

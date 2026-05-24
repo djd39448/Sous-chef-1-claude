@@ -29,6 +29,7 @@ struct PlanScreen: View {
     /// True while `/regenerate-days` is in flight — drives the button
     /// spinner and disables both Regenerate and Finalize.
     @State private var isRegeneratingDays = false
+    @State private var isGeneratingShoppingList = false
 
     private enum LoadState {
         case loading
@@ -509,20 +510,31 @@ struct PlanScreen: View {
         .frame(width: 22, height: 22)
     }
 
-    // MARK: Shopping summary (still mock — wired with /api/kitchen/shopping-list later)
+    // MARK: Shopping summary — "Add To Shopping List" CTA
 
+    /// Mirrors the original web app's "Add To Shopping List" button:
+    /// fires POST /api/kitchen/generate-shopping-list directly (no chat
+    /// detour), then jumps to the Shopping tab where the new list is
+    /// already loaded as the most-recent.
     private var shoppingSummary: some View {
-        Button { goToTab(.shop) } label: {
+        Button { Task { await generateShoppingList() } } label: {
             HStack(spacing: 14) {
-                SCIcon("cart", size: 22, color: .white)
-                    .frame(width: 44, height: 44)
-                    .background(Theme.sage)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                if isGeneratingShoppingList {
+                    ProgressView().tint(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Theme.sage)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                } else {
+                    SCIcon("cart", size: 22, color: .white)
+                        .frame(width: 44, height: 44)
+                        .background(Theme.sage)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Shopping List")
+                    Text(isGeneratingShoppingList ? "Creating list…" : "Add To Shopping List")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Theme.ink)
-                    Text("View this week's items")
+                    Text("Generate from this week's plan")
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.ink2)
                 }
@@ -535,11 +547,33 @@ struct PlanScreen: View {
             .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(Theme.hairline2, lineWidth: 1))
         }
         .buttonStyle(.plain)
+        .disabled(isGeneratingShoppingList || plan == nil)
         .padding(.horizontal, 16)
         .padding(.top, 20)
         // Extra clearance so the last button isn't hidden behind the
         // custom tab bar (which sits in the safeAreaInset of MainView,
         // ~83pt + bottom safe area).
         .padding(.bottom, 24)
+    }
+
+    @MainActor
+    private func generateShoppingList() async {
+        guard !isGeneratingShoppingList else { return }
+        isGeneratingShoppingList = true
+        defer { isGeneratingShoppingList = false }
+        let client = APIClient(baseURL: AppConfig.backendBaseURL, auth: auth)
+        struct Empty: Encodable {}
+        do {
+            let _: ShoppingListWithItems = try await client.post(
+                "/api/kitchen/generate-shopping-list", Empty()
+            )
+            // Jump to the Shopping tab — the new list is now most-recent.
+            goToTab(.shop)
+        } catch let e as APIError where e.isBenignCancellation {
+            return
+        } catch {
+            // Show in the existing failed-state card pattern.
+            loadState = .failed("Couldn't create list: \(error.localizedDescription)")
+        }
     }
 }
