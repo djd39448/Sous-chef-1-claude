@@ -202,7 +202,7 @@ struct CookbookScreen: View {
             Rectangle()
                 .fill(Theme.elev)
                 .frame(width: 140)
-                .overlay { RecipeImage(url: recipe.imageUrl, compact: true) }
+                .overlay { RecipeImage(url: recipe.thumbnailUrl, compact: true) }
                 .clipped()
             VStack(alignment: .leading, spacing: 0) {
                 Text("LAST SAVED")
@@ -255,7 +255,7 @@ struct CookbookScreen: View {
             Rectangle()
                 .fill(Theme.elev)
                 .aspectRatio(1, contentMode: .fit)
-                .overlay { RecipeImage(url: recipe.imageUrl, compact: true) }
+                .overlay { RecipeImage(url: recipe.thumbnailUrl, compact: true) }
                 .clipped()
             VStack(alignment: .leading, spacing: 6) {
                 Text(recipe.title)

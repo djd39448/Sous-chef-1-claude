@@ -60,6 +60,17 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.TouchConversation(ctx, conv.ID)
 
+	// 2a. If the conversation still has the generic placeholder title,
+	// auto-name it after the user's first message. Mirrors the original
+	// web app: first 6 words, truncated to 40 chars with a trailing
+	// ellipsis when needed. Quiet on failure — a stale title isn't
+	// fatal.
+	if isDefaultConversationTitle(conv.Title) {
+		if newTitle := autoConversationTitle(body.Content); newTitle != "" {
+			_ = s.store.UpdateConversationTitle(ctx, conv.ID, newTitle)
+		}
+	}
+
 	// 3. Build the request: system prompt, recent history, then the new message.
 	ingredients, _ := s.store.GetIngredientMemory(ctx, userID)
 	cookbook, _ := s.store.ListCookbook(ctx, userID)
@@ -104,4 +115,37 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.TouchConversation(ctx, conv.ID)
 
 	sse.send(map[string]bool{"done": true})
+}
+
+// isDefaultConversationTitle returns true for the placeholder titles
+// that auto-rename is allowed to overwrite. Keeps user-customized
+// titles untouched — once a real title exists, we never auto-rename.
+func isDefaultConversationTitle(title string) bool {
+	t := strings.TrimSpace(title)
+	return t == "" || t == "Kitchen Chat" || t == "New Chat" || t == "Chat"
+}
+
+// autoConversationTitle picks a short title from the user's first
+// message: first 6 words, truncated to 40 chars with an ellipsis when
+// needed. Mirrors the original web app's `updateConversationTitle`
+// snippet (server/routes.ts).
+func autoConversationTitle(content string) string {
+	words := strings.Fields(strings.TrimSpace(content))
+	if len(words) > 6 {
+		words = words[:6]
+	}
+	t := strings.Join(words, " ")
+	if t == "" {
+		return ""
+	}
+	if len(t) > 40 {
+		// Use rune-safe truncation so we don't cut a multibyte char.
+		runes := []rune(t)
+		if len(runes) > 37 {
+			t = string(runes[:37]) + "..."
+		} else {
+			t = t[:37] + "..."
+		}
+	}
+	return t
 }

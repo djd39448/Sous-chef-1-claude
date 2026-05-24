@@ -109,16 +109,18 @@ type ShoppingListWithItems struct {
 	Items []ShoppingItem `json:"items"`
 }
 
-// CookbookRecipe is a saved recipe. `ImageURL` is the persisted
-// `data:image/png;base64,…` URL — same semantics as MealPlanDay.ImageURL.
+// CookbookRecipe is a saved recipe. `ThumbnailURL` is the persisted
+// `data:image/png;base64,…` URL emitted by gpt-image-1 (or nil for "no
+// image generated yet"). The column is named `thumbnail_url` to match
+// the original web app's schema.
 type CookbookRecipe struct {
-	ID          int       `json:"id"`
-	UserID      string    `json:"userId"`
-	Title       string    `json:"title"`
-	Content     string    `json:"content"`
-	ImagePrompt *string   `json:"imagePrompt"`
-	ImageURL    *string   `json:"imageUrl"`
-	CreatedAt   time.Time `json:"createdAt"`
+	ID           int       `json:"id"`
+	UserID       string    `json:"userId"`
+	Title        string    `json:"title"`
+	Content      string    `json:"content"`
+	ImagePrompt  *string   `json:"imagePrompt"`
+	ThumbnailURL *string   `json:"thumbnailUrl"`
+	CreatedAt    time.Time `json:"createdAt"`
 }
 
 // Ingredient is a soft-inventory ingredient-memory row.

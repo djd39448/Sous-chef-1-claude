@@ -119,7 +119,7 @@ struct RecipeScreen: View {
         if let local = generatedImageURL { return local }
         switch source {
         case .mealPlanDay(let day): return day.imageUrl
-        case .cookbook(let recipe): return recipe.imageUrl
+        case .cookbook(let recipe): return recipe.thumbnailUrl
         }
     }
 

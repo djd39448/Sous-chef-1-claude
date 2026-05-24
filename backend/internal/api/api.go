@@ -66,11 +66,13 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 	// Ingredients.
 	mux.HandleFunc("GET /api/kitchen/ingredients", s.handleGetIngredients)
+	mux.HandleFunc("GET /api/kitchen/ingredient-suggestions", s.handleIngredientSuggestions)
 
 	// Cookbook.
 	mux.HandleFunc("GET /api/kitchen/cookbook", s.handleListCookbook)
 	mux.HandleFunc("GET /api/kitchen/cookbook/{id}", s.handleGetCookbookRecipe)
 	mux.HandleFunc("POST /api/kitchen/cookbook", s.handleCreateCookbookRecipe)
+	mux.HandleFunc("PUT /api/kitchen/cookbook/{id}", s.handleUpdateCookbookRecipe)
 	mux.HandleFunc("DELETE /api/kitchen/cookbook/{id}", s.handleDeleteCookbookRecipe)
 
 	// Images.

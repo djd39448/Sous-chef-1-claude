@@ -113,16 +113,16 @@ struct MealPlanWithDays: Codable, Identifiable {
     let days: [MealPlanDay]
 }
 
-/// `GET /api/kitchen/cookbook[/{id}]` — a saved recipe. `imageUrl` is
-/// a persisted `data:image/png;base64,…` URL — same semantics as
-/// `MealPlanDay.imageUrl`.
+/// `GET /api/kitchen/cookbook[/{id}]` — a saved recipe. `thumbnailUrl`
+/// is a persisted `data:image/png;base64,…` URL (column name
+/// `thumbnail_url` to match the original web app).
 struct CookbookRecipe: Codable, Identifiable {
     let id: Int
     let userId: String
     let title: String
     let content: String
     let imagePrompt: String?
-    let imageUrl: String?
+    let thumbnailUrl: String?
     let createdAt: Date
 }
 

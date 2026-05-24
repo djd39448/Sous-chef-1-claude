@@ -77,6 +77,16 @@ func (s *Store) TouchConversation(ctx context.Context, id int) error {
 	return err
 }
 
+// UpdateConversationTitle renames a conversation. Used to replace the
+// generic "Kitchen Chat" / "New Chat" placeholder with a snippet of
+// the user's first message once that message lands.
+func (s *Store) UpdateConversationTitle(ctx context.Context, id int, title string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE kitchen_conversations SET title = $2, updated_at = now() WHERE id = $1`,
+		id, title)
+	return err
+}
+
 const messageCols = `id, conversation_id, role, content, metadata, created_at`
 
 func scanMessage(row pgx.Row) (Message, error) {

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -125,6 +126,74 @@ func (s *Store) UpsertFoodItem(ctx context.Context, f FoodItemUpsert) error {
 		f.UserID, f.CanonicalName, f.DisplayName, quantity, category, attributes,
 		flexibility, usageContext, inventoryState, sourcing, metadata)
 	return err
+}
+
+// IngredientSuggestion is one autocomplete row for the cookbook
+// ingredient helper — canonical name + display name.
+type IngredientSuggestion struct {
+	CanonicalName string `json:"canonical_name"`
+	DisplayName   string `json:"display_name"`
+}
+
+// ListIngredientSuggestions returns autocomplete candidates pulled
+// from (a) the user's inventory-role CFO rows and (b) the legacy
+// `ingredient_memory` rows, deduped by canonical name. Mirrors the
+// original web app's `/ingredient-suggestions` shape and cap (20).
+func (s *Store) ListIngredientSuggestions(ctx context.Context, userID string) ([]IngredientSuggestion, error) {
+	out := make([]IngredientSuggestion, 0, 20)
+	seen := map[string]bool{}
+
+	// Inventory CFOs first (richer display names).
+	rows, err := s.pool.Query(ctx,
+		`SELECT canonical_name, display_name FROM food_items
+		 WHERE user_id = $1 AND usage_context ->> 'role' = 'inventory'
+		 ORDER BY updated_at DESC NULLS LAST, id DESC`, userID)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var canonical, display string
+			if err := rows.Scan(&canonical, &display); err != nil {
+				continue
+			}
+			canonical = strings.ToLower(strings.TrimSpace(canonical))
+			if canonical == "" || seen[canonical] {
+				continue
+			}
+			seen[canonical] = true
+			if display == "" {
+				display = canonical
+			}
+			out = append(out, IngredientSuggestion{CanonicalName: canonical, DisplayName: display})
+		}
+	}
+
+	// Legacy ingredient_memory fallback.
+	rows2, err := s.pool.Query(ctx,
+		`SELECT name FROM ingredient_memory
+		 WHERE user_id = $1 ORDER BY last_mentioned DESC NULLS LAST, id DESC`, userID)
+	if err == nil {
+		defer rows2.Close()
+		for rows2.Next() {
+			var name string
+			if err := rows2.Scan(&name); err != nil {
+				continue
+			}
+			canonical := strings.ToLower(strings.TrimSpace(name))
+			if canonical == "" || seen[canonical] {
+				continue
+			}
+			seen[canonical] = true
+			out = append(out, IngredientSuggestion{CanonicalName: canonical, DisplayName: name})
+			if len(out) >= 20 {
+				break
+			}
+		}
+	}
+
+	if len(out) > 20 {
+		out = out[:20]
+	}
+	return out, nil
 }
 
 // MarkFoodItemOut sets a user's inventory-role CFO for canonicalName to an
