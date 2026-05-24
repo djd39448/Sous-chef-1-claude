@@ -178,37 +178,53 @@ struct RecipeScreen: View {
         content = ""
         errorMessage = nil
         let decoder = JSONDecoder()
+        var eventsReceived = 0
+        var decodeFailures = 0
+        var contentDeltas = 0
+        print("🔵 streamGenerate START dayId=\(dayId)")
         do {
             for try await event in client.stream(
                 path: "/api/kitchen/generate-recipe/\(dayId)",
                 body: [String: String]()
             ) {
+                eventsReceived += 1
                 // Tolerate occasional non-JSON events (heartbeats, partial
                 // frames) — skip them rather than abort the stream.
                 guard let chunk = try? decoder.decode(
                     RecipeChunk.self, from: Data(event.data.utf8)
-                ) else { continue }
+                ) else {
+                    decodeFailures += 1
+                    print("🔴 decode failed for event #\(eventsReceived): \(event.data.prefix(120))")
+                    continue
+                }
                 if let delta = chunk.content {
+                    contentDeltas += 1
                     content += delta
                 } else if let prompt = chunk.imagePrompt, chunk.done == true {
                     imagePrompt = prompt
+                    print("🟢 done event received — imagePrompt set")
                     break
                 } else if let err = chunk.error {
                     errorMessage = err
+                    print("🔴 server error event: \(err)")
                 }
             }
         } catch let e as APIError where e.isBenignCancellation {
             // View went away — leave content/errorMessage as-is and bail.
+            print("🟡 benign cancellation — eventsReceived=\(eventsReceived) contentLen=\(content.count)")
             isStreaming = false
             return
         } catch {
+            print("🔴 stream error: \(error.localizedDescription) eventsReceived=\(eventsReceived)")
             errorMessage = error.localizedDescription
         }
         isStreaming = false
 
-        // The stream closed cleanly but the model gave us nothing — surface
-        // a real "try again" affordance instead of leaving the user staring
-        // at "No recipe content yet."
+        print("🔵 streamGenerate END dayId=\(dayId) events=\(eventsReceived) deltas=\(contentDeltas) decodeFails=\(decodeFailures) contentLen=\(content.count) errorMessage=\(errorMessage ?? "<nil>")")
+
+        // The stream closed cleanly but the model gave us nothing —
+        // surface a real "try again" affordance instead of leaving the
+        // user staring at "No recipe content yet."
         if content.isEmpty && errorMessage == nil {
             errorMessage = "The recipe didn't come through. Tap retry to try again."
         }

@@ -139,21 +139,38 @@ struct APIClient {
                         return
                     }
 
-                    // Read line by line. SSE separates events with a blank
-                    // line; within an event, `data:` lines accumulate.
-                    // Non-`data:` lines (comments, heartbeats) are skipped;
-                    // empty `data:` lines (no payload) yield no event.
-                    var buffer: [String] = []
-                    for try await line in bytes.lines {
-                        if line.isEmpty {
-                            yieldEvent(from: &buffer, into: continuation)
-                            continue
-                        }
-                        if let payload = parseDataLine(line) {
-                            buffer.append(payload)
+                    // Read raw bytes ourselves rather than via
+                    // `bytes.lines`. `URLSession.bytes(for:).lines`
+                    // has a long-standing quirk where it can buffer
+                    // a whole SSE response and deliver every line at
+                    // EOF — when the iOS recipe screen was getting
+                    // `events=1 decodeFails=1` for a 488-event recipe
+                    // stream that the server flushed cleanly, that
+                    // was this bug. Reading raw bytes and framing on
+                    // `\n\n` ourselves emits each event as it lands.
+                    var rxBuf: [UInt8] = []
+                    for try await byte in bytes {
+                        rxBuf.append(byte)
+                        // Look for the event boundary "\n\n" at the
+                        // tail. `\r\n\r\n` also accepted — RFC says
+                        // SSE accepts both line endings.
+                        if isEventBoundary(rxBuf) {
+                            let raw = String(bytes: rxBuf, encoding: .utf8) ?? ""
+                            rxBuf.removeAll(keepingCapacity: true)
+                            if let payload = sseFrameToPayload(raw),
+                               !payload.isEmpty {
+                                continuation.yield(SSEEvent(data: payload))
+                            }
                         }
                     }
-                    yieldEvent(from: &buffer, into: continuation)
+                    // Flush trailing partial event (no terminator before EOF).
+                    if !rxBuf.isEmpty {
+                        let raw = String(bytes: rxBuf, encoding: .utf8) ?? ""
+                        if let payload = sseFrameToPayload(raw),
+                           !payload.isEmpty {
+                            continuation.yield(SSEEvent(data: payload))
+                        }
+                    }
                     continuation.finish()
                 } catch is CancellationError {
                     continuation.finish()
@@ -175,13 +192,39 @@ struct APIClient {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private func yieldEvent(from buffer: inout [String],
-                            into continuation: AsyncThrowingStream<SSEEvent, Error>.Continuation) {
-        guard !buffer.isEmpty else { return }
-        let payload = buffer.joined(separator: "\n")
-        buffer.removeAll(keepingCapacity: true)
-        guard !payload.isEmpty else { return }
-        continuation.yield(SSEEvent(data: payload))
+    /// True when the tail of `buf` is `\n\n` or `\r\n\r\n` — the SSE
+    /// event-terminator. Cheap to call on every byte; we only inspect
+    /// at most the last 4 bytes.
+    private func isEventBoundary(_ buf: [UInt8]) -> Bool {
+        let lf: UInt8 = 0x0A
+        let cr: UInt8 = 0x0D
+        let n = buf.count
+        if n >= 2, buf[n - 1] == lf, buf[n - 2] == lf { return true }
+        if n >= 4,
+           buf[n - 1] == lf, buf[n - 2] == cr,
+           buf[n - 3] == lf, buf[n - 4] == cr {
+            return true
+        }
+        return false
+    }
+
+    /// Convert one SSE event frame (raw text up to and including the
+    /// trailing `\n\n`) into the concatenated payload of its `data:`
+    /// lines. Non-`data:` lines (comments, heartbeats) are skipped.
+    private func sseFrameToPayload(_ frame: String) -> String? {
+        var parts: [String] = []
+        // Split on either kind of newline so we cope with whatever the
+        // server emits.
+        let lines = frame.split(whereSeparator: { $0 == "\n" || $0 == "\r" })
+        for line in lines {
+            if line.isEmpty { continue }
+            let s = String(line)
+            if let payload = parseDataLine(s) {
+                parts.append(payload)
+            }
+        }
+        guard !parts.isEmpty else { return nil }
+        return parts.joined(separator: "\n")
     }
 
     /// Shared JSON decoder. Accepts ISO-8601 timestamps with up to 9
