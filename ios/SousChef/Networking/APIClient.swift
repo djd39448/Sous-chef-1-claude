@@ -14,33 +14,33 @@ struct APIClient {
     let baseURL: URL
     let auth: AuthModel
 
-    func get<T: Decodable>(_ path: String) async throws -> T {
-        try await request(path: path, method: "GET", body: nil)
+    func get<T: Decodable>(_ path: String, timeout: TimeInterval? = nil) async throws -> T {
+        try await request(path: path, method: "GET", body: nil, timeout: timeout)
     }
 
-    func post<T: Decodable, B: Encodable>(_ path: String, _ body: B) async throws -> T {
+    func post<T: Decodable, B: Encodable>(_ path: String, _ body: B, timeout: TimeInterval? = nil) async throws -> T {
         let data = try JSONEncoder().encode(body)
-        return try await request(path: path, method: "POST", body: data)
+        return try await request(path: path, method: "POST", body: data, timeout: timeout)
     }
 
-    func patch<T: Decodable, B: Encodable>(_ path: String, _ body: B) async throws -> T {
+    func patch<T: Decodable, B: Encodable>(_ path: String, _ body: B, timeout: TimeInterval? = nil) async throws -> T {
         let data = try JSONEncoder().encode(body)
-        return try await request(path: path, method: "PATCH", body: data)
+        return try await request(path: path, method: "PATCH", body: data, timeout: timeout)
     }
 
-    func put<T: Decodable, B: Encodable>(_ path: String, _ body: B) async throws -> T {
+    func put<T: Decodable, B: Encodable>(_ path: String, _ body: B, timeout: TimeInterval? = nil) async throws -> T {
         let data = try JSONEncoder().encode(body)
-        return try await request(path: path, method: "PUT", body: data)
+        return try await request(path: path, method: "PUT", body: data, timeout: timeout)
     }
 
     func delete(_ path: String) async throws {
-        _ = try await rawRequest(path: path, method: "DELETE", body: nil)
+        _ = try await rawRequest(path: path, method: "DELETE", body: nil, timeout: nil)
     }
 
     // MARK: - Internal
 
-    private func request<T: Decodable>(path: String, method: String, body: Data?) async throws -> T {
-        let data = try await rawRequest(path: path, method: method, body: body)
+    private func request<T: Decodable>(path: String, method: String, body: Data?, timeout: TimeInterval?) async throws -> T {
+        let data = try await rawRequest(path: path, method: method, body: body, timeout: timeout)
         do {
             return try Self.decoder.decode(T.self, from: data)
         } catch {
@@ -48,7 +48,7 @@ struct APIClient {
         }
     }
 
-    private func rawRequest(path: String, method: String, body: Data?) async throws -> Data {
+    private func rawRequest(path: String, method: String, body: Data?, timeout: TimeInterval?) async throws -> Data {
         guard let token = auth.session?.accessToken else { throw APIError.missingAuth }
 
         let url = baseURL.appendingPathComponent(path)
@@ -57,6 +57,9 @@ struct APIClient {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.httpBody = body
+        if let timeout {
+            req.timeoutInterval = timeout
+        }
 
         let (data, resp): (Data, URLResponse)
         do {

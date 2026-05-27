@@ -30,6 +30,12 @@ struct PlanScreen: View {
     /// spinner and disables both Regenerate and Finalize.
     @State private var isRegeneratingDays = false
     @State private var isGeneratingShoppingList = false
+    /// Error from the most recent /generate-shopping-list call. Kept
+    /// separate from `loadState` so a slow shopping-list call (which
+    /// can take 30–60s — it's a single non-streaming ChatJSON
+    /// completion) timing out doesn't tear down the loaded meal plan.
+    /// See FINDINGS_2026-05-27.md → P0-1.
+    @State private var shoppingListError: String?
 
     private enum LoadState {
         case loading
@@ -541,37 +547,68 @@ struct PlanScreen: View {
     /// detour), then jumps to the Shopping tab where the new list is
     /// already loaded as the most-recent.
     private var shoppingSummary: some View {
-        Button { Task { await generateShoppingList() } } label: {
-            HStack(spacing: 14) {
-                if isGeneratingShoppingList {
-                    ProgressView().tint(.white)
-                        .frame(width: 44, height: 44)
-                        .background(Theme.sage)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                } else {
-                    SCIcon("cart", size: 22, color: .white)
-                        .frame(width: 44, height: 44)
-                        .background(Theme.sage)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
+        VStack(spacing: 10) {
+            Button { Task { await generateShoppingList() } } label: {
+                HStack(spacing: 14) {
+                    if isGeneratingShoppingList {
+                        ProgressView().tint(.white)
+                            .frame(width: 44, height: 44)
+                            .background(Theme.sage)
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                    } else {
+                        SCIcon("cart", size: 22, color: .white)
+                            .frame(width: 44, height: 44)
+                            .background(Theme.sage)
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(isGeneratingShoppingList ? "Creating list…" : "Add To Shopping List")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Theme.ink)
+                        Text("Generate from this week's plan")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.ink2)
+                    }
+                    Spacer(minLength: 0)
+                    SCIcon("chevR", size: 16, color: Theme.ink3)
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(isGeneratingShoppingList ? "Creating list…" : "Add To Shopping List")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Theme.ink)
-                    Text("Generate from this week's plan")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.ink2)
-                }
-                Spacer(minLength: 0)
-                SCIcon("chevR", size: 16, color: Theme.ink3)
+                .padding(18)
+                .background(Theme.sageSoft)
+                .clipShape(RoundedRectangle(cornerRadius: 20))
+                .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(Theme.hairline2, lineWidth: 1))
             }
-            .padding(18)
-            .background(Theme.sageSoft)
-            .clipShape(RoundedRectangle(cornerRadius: 20))
-            .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(Theme.hairline2, lineWidth: 1))
+            .buttonStyle(.plain)
+            .disabled(isGeneratingShoppingList || plan == nil)
+
+            if let err = shoppingListError {
+                HStack(alignment: .top, spacing: 10) {
+                    SCIcon("close", size: 14, color: .white)
+                        .frame(width: 28, height: 28)
+                        .background(.red)
+                        .clipShape(Circle())
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Couldn't create shopping list")
+                            .font(Theme.sans(13, weight: .semibold))
+                            .foregroundStyle(Theme.ink)
+                        Text(err)
+                            .font(Theme.sans(12))
+                            .foregroundStyle(Theme.ink2)
+                    }
+                    Spacer(minLength: 0)
+                    Button {
+                        shoppingListError = nil
+                    } label: {
+                        SCIcon("close", size: 12, color: Theme.ink3)
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(12)
+                .background(Theme.card)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.hairline2, lineWidth: 1))
+            }
         }
-        .buttonStyle(.plain)
-        .disabled(isGeneratingShoppingList || plan == nil)
         .padding(.horizontal, 16)
         .padding(.top, 20)
         // Extra clearance so the last button isn't hidden behind the
@@ -584,21 +621,28 @@ struct PlanScreen: View {
     private func generateShoppingList() async {
         guard !isGeneratingShoppingList else { return }
         isGeneratingShoppingList = true
+        shoppingListError = nil
         defer { isGeneratingShoppingList = false }
         let client = APIClient(baseURL: AppConfig.backendBaseURL, auth: auth)
         struct Body: Encodable { let weekStartDate: String }
         do {
+            // Longer timeout: the backend's /generate-shopping-list is a
+            // single non-streaming ChatJSON call against gpt-4.1 with
+            // ~1024 max tokens. The default URLSession 60s ceiling clips
+            // it; ~180s gives the slow tail room to land.
             let _: ShoppingListWithItems = try await client.post(
                 "/api/kitchen/generate-shopping-list",
-                Body(weekStartDate: currentWeek)
+                Body(weekStartDate: currentWeek),
+                timeout: 180
             )
             // Jump to the Shopping tab — the new list is now most-recent.
             goToTab(.shop)
         } catch let e as APIError where e.isBenignCancellation {
             return
         } catch {
-            // Show in the existing failed-state card pattern.
-            loadState = .failed("Couldn't create list: \(error.localizedDescription)")
+            // Keep the plan visible — show the failure inline next to the
+            // Add-To-Shopping-List card. See FINDINGS_2026-05-27.md → P0-1.
+            shoppingListError = error.localizedDescription
         }
     }
 }
