@@ -1,7 +1,8 @@
 # API Specification
 
 The backend exposes a REST API. All paths below are relative to the API base
-URL (the AWS deployment; `http://localhost:8080` in development).
+URL (`https://souschef-backend-production.up.railway.app` in production,
+`http://localhost:8080` in development).
 
 ## Conventions
 

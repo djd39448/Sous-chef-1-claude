@@ -21,7 +21,7 @@ the only thing the tracks share.
 | 2 | Data | `supabase/` — schema migrations + RLS | — |
 | 3 | Backend | `backend/` — Go REST API, all endpoints, SSE, OpenAI | Go install, OpenAI key |
 | 4 | iOS | `ios/` — SwiftUI app, 8 screens, Sign in with Apple | Xcode, Supabase project |
-| 5 | Deploy | Backend on AWS, app running in iOS Simulator | AWS account |
+| 5 | Deploy | Backend on Railway (https), app sideloaded on iPhone | Railway account, Apple Developer (free Personal Team) |
 
 ## Prerequisites checklist
 
@@ -33,7 +33,9 @@ Phases 0–2 need nothing. The remaining phases need Dave to provide:
       Postgres + Auth. Needed to apply Phase 2 migrations and for Phase 4.
 - [ ] **OpenAI API key** — a key with billing enabled. The original used Replit's
       OpenAI proxy, which is gone. Needed to run Phase 3 end-to-end.
-- [ ] **AWS account** — for hosting the Go backend. Needed for Phase 5.
+- [x] **Railway account** — hosts the deployed Go backend at
+      `https://souschef-backend-production.up.railway.app`. (Pivoted from
+      the AWS Fargate plan; see `CHANGE_LOG.md` 2026-05-24.)
 - [x] **Go toolchain** — installed (go 1.26.3).
 - [ ] **Supabase CLI** — `brew install supabase/tap/supabase`. Needed to apply
       migrations. (Astra can install.)
@@ -83,3 +85,9 @@ Deviations from a literal 1:1 port, and why.
   light interactions (shopping toggle, recipe ingredient toggle, calendar
   segmented). `xcodebuild` for the iOS Simulator passes with zero warnings.
   Running against mock data; wiring to the Go backend is the next step.
+- **2026-05-24** — Phase 5 done. Backend deployed to Railway at
+  https://souschef-backend-production.up.railway.app (pivoted from the
+  AWS Fargate plan — see CHANGE_LOG). iOS sideloaded to Dave's iPhone 15
+  via free Apple Developer Personal Team. Active development is now
+  bug-fixing and feature iteration; see BUILD_LOG for the running log
+  and BUGS.md for the audit findings.

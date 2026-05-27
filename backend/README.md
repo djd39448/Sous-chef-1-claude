@@ -52,6 +52,6 @@ requires an `Authorization: Bearer <supabase-jwt>` header.
 
 ## Status
 
-Builds, vets, and tests clean. Not yet exercised end-to-end — that needs a live
-Supabase database (apply `../supabase/migrations/`) and an OpenAI key.
-Deployment to AWS is Phase 5.
+Builds, vets, and tests clean against a live Supabase database
+(`../supabase/migrations/` applied) and an OpenAI key. Deployed to
+Railway — see [`../docs/RAILWAY_DEPLOY.md`](../docs/RAILWAY_DEPLOY.md).

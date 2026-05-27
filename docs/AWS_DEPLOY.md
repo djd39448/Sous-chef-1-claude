@@ -1,4 +1,11 @@
-# Sous Chef — AWS Deployment Plan
+# Sous Chef — AWS Deployment Plan (SUPERSEDED)
+
+> **⚠️ Superseded 2026-05-24.** The backend is deployed to **Railway**,
+> not AWS. See [`RAILWAY_DEPLOY.md`](RAILWAY_DEPLOY.md) for the
+> authoritative runbook and `CHANGE_LOG.md` (2026-05-24 entry) for the
+> pivot rationale. This file is kept as a reference if/when the backend
+> moves to AWS later, or to inform other projects (e.g. DevCore) that
+> need the AWS surface.
 
 The Go backend deploys to AWS. This doc lays out the architecture, the
 prerequisites, and the step-by-step setup so Dave can both ship the

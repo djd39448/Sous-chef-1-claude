@@ -42,7 +42,7 @@ file, every commit, from the first line.
 | Database | Supabase / PostgreSQL — `supabase/migrations/*.sql` |
 | Backend API | Go (`backend/`, module `souschef`) |
 | iOS app | Swift / SwiftUI (`ios/SousChef.xcodeproj`) |
-| Backend hosting (target) | AWS (Phase 5) |
+| Backend hosting | Railway (deployed; see `docs/RAILWAY_DEPLOY.md`) |
 
 Three build tracks — backend, data, iOS — each build independently against the
 one shared contract. **Change the contract first**; both tracks follow.
@@ -348,26 +348,27 @@ Baseline: Supabase on PostgreSQL 15+.
 
 ---
 
-## sc-06 — AWS Deployment (Phase 5 target)
+## sc-06 — Backend Deployment (Railway)
 
-The Go backend will deploy to AWS. These rules apply when that lands.
+The Go backend deploys to Railway. (We pivoted away from the AWS Fargate
+plan; see `CHANGE_LOG.md` 2026-05-24 and `docs/RAILWAY_DEPLOY.md`. The
+AWS plan stays in `docs/AWS_DEPLOY.md` as historical reference, marked
+superseded.)
 
-- **Compute by traffic shape.** ECS/Fargate is the default for a
-  steady-traffic REST API. Lambda for event-driven / spiky low volume.
-- **Build.** Multi-stage Docker from `scratch` or a distroless base,
-  `CGO_ENABLED=0`, static binary, Linux target (`GOOS=linux GOARCH=arm64`
-  for Graviton). Tag images immutably by git SHA.
-- **Config.** All configuration via environment variables (twelve-factor).
-  No config files baked into images.
-- **Secrets.** AWS Secrets Manager or SSM Parameter Store, fetched at
-  startup. `DATABASE_URL`, `SUPABASE_JWT_SECRET`, `OPENAI_API_KEY` are
-  secrets — never in env vars committed to IaC, never in the image, never
-  in the repo.
-- **Observability.** `slog` JSON to stdout → CloudWatch Logs. `/healthz`
-  endpoint for the load balancer (already implemented, unauthenticated).
-- **Infrastructure is code.** The cluster, service, and networking are
-  Terraform or CDK — no console click-ops for anything that must be
-  reproducible. IAM roles follow least privilege.
+- **Build.** Multi-stage Docker from a distroless base,
+  `CGO_ENABLED=0`, static binary. Use `$BUILDPLATFORM` and
+  `$TARGETOS`/`$TARGETARCH` so the same Dockerfile builds amd64 (Railway)
+  or arm64 (Apple-silicon dev box) without changes.
+- **Config.** All configuration via environment variables
+  (twelve-factor). No config files baked into images. `PORT` is provided
+  by Railway; `config.go` defaults it to `8080` for local dev.
+- **Secrets.** Set via `railway variables --set` (or the dashboard) —
+  `DATABASE_URL`, `SUPABASE_PROJECT_URL`, `OPENAI_API_KEY`. Never in env
+  vars committed to the repo, never in the image, never in IaC.
+- **Observability.** Standard library `log` to stdout → Railway Logs.
+  `/healthz` endpoint for liveness checks (unauthenticated).
+- **Deploy.** `railway up --detach` from `backend/`. Manual today; the
+  GitHub auto-deploy hook is not configured.
 
 ---
 
@@ -408,11 +409,15 @@ environment gotchas — each lists the **symptom**, the **cause**, and the
 - **Fix:** never rely on case to distinguish files or identifiers. CI on
   case-sensitive Linux *will* fail on a mismatch.
 
-### Cross-compiling Go for AWS
-- **Symptom:** a binary built on the Mac does not run on AWS.
-- **Cause:** the Mac is arm64/Darwin; the AWS target is Linux.
-- **Fix:** `GOOS=linux GOARCH=arm64 CGO_ENABLED=0` in CI, never by hand.
-  Local `go build` is for local runs only.
+### Cross-compiling Go for the Railway container
+- **Symptom:** a binary built on the Mac does not run inside the
+  Railway container.
+- **Cause:** the Mac is arm64/Darwin; the Railway container is
+  Linux/amd64.
+- **Fix:** the `backend/Dockerfile` uses Docker buildx and
+  `GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0` so the right binary
+  is produced automatically. Don't hand-build for "local-on-the-Mac
+  binary that's also production" — use the Dockerfile.
 
 ### Xcode and macOS version coupling
 - **Symptom:** the App Store refuses to install the latest Xcode.

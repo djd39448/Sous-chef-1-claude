@@ -14,7 +14,7 @@ full re-platform — **not** a code translation — onto a native stack:
 | Database | PostgreSQL (Replit) | Supabase (PostgreSQL) |
 | Auth | Replit Auth (OIDC) | Supabase Auth + Sign in with Apple |
 | AI | OpenAI via Replit proxy | OpenAI directly |
-| Hosting | Replit | AWS (backend), Supabase (data) |
+| Hosting | Replit | Railway (backend), Supabase (data) |
 
 ## Method
 
