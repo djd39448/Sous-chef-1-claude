@@ -171,6 +171,72 @@ func (s *Server) handlePatchMealPlanDay(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, day)
 }
 
+// handleSwapMealPlanDays serves POST /api/kitchen/meal-plan-day/swap.
+//
+// Body: `{ "aId": int, "bId": int }`. Atomically swaps mealName,
+// notes, recipeContent, recipeImagePrompt, and imageUrl between the
+// two days; dayOfWeek and the row ids stay fixed. Both days must be
+// owned by the caller and belong to the same meal plan. Returns
+// `{ "a": MealPlanDay, "b": MealPlanDay }` with the post-swap rows.
+//
+// Used by the Plan-tab drag-to-reorder flow: dragging Monday's meal
+// onto Wednesday's row swaps the two dishes (with their photos and
+// recipe content) while Monday stays Monday and Wednesday stays
+// Wednesday. Avoiding two PATCH calls preserves the photo + recipe —
+// `UpdateMealPlanDayMeal` clears them on a name change.
+func (s *Server) handleSwapMealPlanDays(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	userID := auth.UserID(ctx)
+
+	var body struct {
+		AID int `json:"aId"`
+		BID int `json:"bId"`
+	}
+	if err := decodeJSON(r, &body); err != nil || body.AID == 0 || body.BID == 0 {
+		writeError(w, http.StatusBadRequest, "aId and bId are required")
+		return
+	}
+	if body.AID == body.BID {
+		writeError(w, http.StatusBadRequest, "aId and bId must differ")
+		return
+	}
+
+	// Ownership check on both rows before mutating. Loading the rows
+	// twice (here + inside the swap tx) is fine — the swap uses
+	// SELECT ... FOR UPDATE, so it's still atomic against concurrent
+	// writers.
+	_, ownerA, err := s.store.GetMealPlanDay(ctx, body.AID)
+	if writeStoreErr(w, err, "meal-plan day not found") {
+		return
+	}
+	if ownerA != userID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	_, ownerB, err := s.store.GetMealPlanDay(ctx, body.BID)
+	if writeStoreErr(w, err, "meal-plan day not found") {
+		return
+	}
+	if ownerB != userID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	aFresh, bFresh, err := s.store.SwapMealPlanDays(ctx, body.AID, body.BID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "meal-plan day not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"a": aFresh,
+		"b": bFresh,
+	})
+}
+
 // handleGenerateMealPlan serves POST /api/kitchen/generate-meal-plan.
 func (s *Server) handleGenerateMealPlan(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

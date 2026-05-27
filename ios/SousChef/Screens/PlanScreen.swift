@@ -1,4 +1,17 @@
 import SwiftUI
+import UniformTypeIdentifiers
+
+/// The dragged payload for the edit-mode drag-to-swap gesture. Carries
+/// just the source row's id; the drop site uses its own `day.id` as the
+/// target. SwiftUI's drag-and-drop API needs a `Transferable` type even
+/// when the in-flight payload is conceptually one integer.
+struct DayDragPayload: Codable, Transferable {
+    let dayId: Int
+
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .data)
+    }
+}
 
 /// The Plan tab — a meal plan for whatever week the user is viewing,
 /// with prev/next arrows to flip weeks and a link to the calendar.
@@ -36,6 +49,12 @@ struct PlanScreen: View {
     /// completion) timing out doesn't tear down the loaded meal plan.
     /// See FINDINGS_2026-05-27.md → P0-1.
     @State private var shoppingListError: String?
+    /// True while a drag-to-swap call is in flight — blocks overlapping
+    /// swaps and dims the affected rows.
+    @State private var isSwapping = false
+    /// Last drag-to-swap error message. Surfaces inline near the meal
+    /// rows so the user knows the optimistic swap was reverted.
+    @State private var swapError: String?
 
     private enum LoadState {
         case loading
@@ -351,8 +370,11 @@ struct PlanScreen: View {
         let allDays = sortedDays(plan)
         return VStack(spacing: 10) {
             planListHeader
+            if let err = swapError, isEditMode {
+                swapErrorBanner(err)
+            }
             ForEach(allDays) { day in
-                Button {
+                let rowButton = Button {
                     if isEditMode {
                         toggleApproval(day)
                     } else {
@@ -367,7 +389,24 @@ struct PlanScreen: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .disabled(isRegeneratingDays)
+                .disabled(isRegeneratingDays || isSwapping)
+
+                // Drag-to-swap, edit-mode only. Long-press lifts the row;
+                // dropping on another row atomically swaps the two dishes
+                // (with their photos + recipe content) via the backend
+                // swap endpoint. Normal mode keeps tap-to-open-recipe.
+                if isEditMode {
+                    rowButton
+                        .draggable(DayDragPayload(dayId: day.id))
+                        .dropDestination(for: DayDragPayload.self) { items, _ in
+                            guard let payload = items.first,
+                                  payload.dayId != day.id else { return false }
+                            Task { await swapDays(sourceID: payload.dayId, targetID: day.id) }
+                            return true
+                        }
+                } else {
+                    rowButton
+                }
             }
             if isEditMode {
                 editModeFooter(plan: plan, allDays: allDays)
@@ -375,6 +414,36 @@ struct PlanScreen: View {
             }
         }
         .padding(.horizontal, 16)
+    }
+
+    /// The inline error banner shown above the meal rows after a
+    /// drag-to-swap call fails. The optimistic local swap has already
+    /// been reverted by the time this renders.
+    private func swapErrorBanner(_ err: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            SCIcon("close", size: 12, color: .white)
+                .frame(width: 24, height: 24)
+                .background(.red)
+                .clipShape(Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Couldn't move that meal")
+                    .font(Theme.sans(13, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+                Text(err)
+                    .font(Theme.sans(12))
+                    .foregroundStyle(Theme.ink2)
+            }
+            Spacer(minLength: 0)
+            Button { swapError = nil } label: {
+                SCIcon("close", size: 11, color: Theme.ink3)
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(10)
+        .background(Theme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.hairline2, lineWidth: 1))
     }
 
     private func toggleApproval(_ day: MealPlanDay) {
@@ -431,6 +500,91 @@ struct PlanScreen: View {
             }
             .buttonStyle(.plain)
             .disabled(!allApproved || isRegeneratingDays)
+        }
+    }
+
+    /// Build a fresh `MealPlanDay` with `target`'s identity (id, plan id,
+    /// dayOfWeek, recipeId stay put) and `source`'s content (mealName,
+    /// notes, recipeContent, recipeImagePrompt, imageUrl move over).
+    private func copyingContent(_ target: MealPlanDay, from source: MealPlanDay) -> MealPlanDay {
+        MealPlanDay(
+            id: target.id,
+            mealPlanId: target.mealPlanId,
+            dayOfWeek: target.dayOfWeek,
+            recipeId: target.recipeId,
+            mealName: source.mealName,
+            notes: source.notes,
+            recipeContent: source.recipeContent,
+            recipeImagePrompt: source.recipeImagePrompt,
+            imageUrl: source.imageUrl
+        )
+    }
+
+    /// Replace the loaded plan's days array. Rebuilds the wrapper struct
+    /// because `MealPlanWithDays.days` is `let`.
+    @MainActor
+    private func setLoadedDays(_ plan: MealPlanWithDays, _ newDays: [MealPlanDay]) {
+        let updated = MealPlanWithDays(
+            id: plan.id, userId: plan.userId,
+            weekStartDate: plan.weekStartDate,
+            createdAt: plan.createdAt, updatedAt: plan.updatedAt,
+            days: newDays
+        )
+        loadState = .loaded(plan: updated)
+    }
+
+    /// Atomic drag-to-swap. Optimistically swaps the two days' content
+    /// in local state, then POSTs to /meal-plan-day/swap. On failure
+    /// reverts the optimistic update and surfaces an inline error.
+    @MainActor
+    private func swapDays(sourceID: Int, targetID: Int) async {
+        guard !isSwapping, sourceID != targetID else { return }
+        guard case .loaded(.some(let plan)) = loadState else { return }
+        guard let srcIdx = plan.days.firstIndex(where: { $0.id == sourceID }),
+              let tgtIdx = plan.days.firstIndex(where: { $0.id == targetID }) else {
+            return
+        }
+        let originalDays = plan.days
+        let src = originalDays[srcIdx]
+        let tgt = originalDays[tgtIdx]
+
+        // Optimistic swap.
+        var swapped = originalDays
+        swapped[srcIdx] = copyingContent(src, from: tgt)
+        swapped[tgtIdx] = copyingContent(tgt, from: src)
+        setLoadedDays(plan, swapped)
+        swapError = nil
+        isSwapping = true
+        defer { isSwapping = false }
+
+        struct Body: Encodable { let aId: Int; let bId: Int }
+        struct Response: Decodable { let a: MealPlanDay; let b: MealPlanDay }
+        let client = APIClient(baseURL: AppConfig.backendBaseURL, auth: auth)
+        do {
+            let resp: Response = try await client.post(
+                "/api/kitchen/meal-plan-day/swap",
+                Body(aId: sourceID, bId: targetID)
+            )
+            // Reconcile against the server's fresh rows in case anything
+            // raced. Look both up by id and replace in place.
+            if case .loaded(.some(let p)) = loadState {
+                var reconciled = p.days
+                if let i = reconciled.firstIndex(where: { $0.id == resp.a.id }) {
+                    reconciled[i] = resp.a
+                }
+                if let i = reconciled.firstIndex(where: { $0.id == resp.b.id }) {
+                    reconciled[i] = resp.b
+                }
+                setLoadedDays(p, reconciled)
+            }
+        } catch let e as APIError where e.isBenignCancellation {
+            return
+        } catch {
+            // Revert the optimistic swap and surface the failure.
+            if case .loaded(.some(let p)) = loadState {
+                setLoadedDays(p, originalDays)
+            }
+            swapError = error.localizedDescription
         }
     }
 

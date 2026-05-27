@@ -983,3 +983,53 @@ ever." Made it so. See `CHANGE_LOG.md` → 2026-05-27 for the pivot rationale
 Verified: `go build ./...`, `go vet ./...`, `go test ./...` clean.
 `xcodebuild iphonesimulator` clean. iOS sideload + real-device verification
 pending (backend deploy + phone install in the same session).
+
+---
+
+## 2026-05-27 · Edit Plan: drag-to-swap two days' meals
+
+Dave's ask: in the Edit Plan workflow, let the user drag a meal from one
+day onto another to swap them, so moving meals between days is one
+gesture instead of "regenerate and hope." Wired as an atomic backend
+swap so the photo and recipe content travel with the meal — a two-PATCH
+implementation would lose both, since `UpdateMealPlanDayMeal` clears
+`image_url`, `recipe_content`, and `recipe_image_prompt` on a name
+change.
+
+- **Contract.** `api-spec.md` adds `POST /api/kitchen/meal-plan-day/swap`
+  with `{ aId, bId }` body, returning `{ a, b }` with the post-swap rows.
+  Both ids must be owned by the caller; same-plan and not-equal checks
+  enforced server-side.
+
+- **Backend — `store/mealplans.go`.** `SwapMealPlanDays(ctx, aID, bID)`
+  opens a transaction, `SELECT ... FOR UPDATE`s both rows so concurrent
+  writers can't interleave, runs two UPDATEs that move
+  `meal_name`/`notes`/`recipe_content`/`recipe_image_prompt`/`image_url`
+  between the two rows, reads back the fresh rows, commits. Rejects
+  same-id swaps and cross-plan swaps.
+
+- **Backend — `handlers_mealplan.go`.** `handleSwapMealPlanDays` validates
+  the body, checks ownership on both days (returns `403`/`404` per the
+  general rule), then calls the store. Route registered as
+  `POST /api/kitchen/meal-plan-day/swap`.
+
+- **iOS — `PlanScreen.swift`.**
+  - New top-of-file `DayDragPayload: Codable, Transferable` carries the
+    source day id during the drag.
+  - In edit mode only, each meal row wraps in `.draggable(DayDragPayload
+    (dayId: day.id))` + `.dropDestination(for: DayDragPayload.self)` —
+    composes with the existing approval-checkbox button. Long-press
+    lifts a row; dropping on another row triggers the swap. Normal
+    mode keeps tap-to-open-recipe.
+  - `swapDays(sourceID:targetID:)` swaps the two days' content
+    optimistically in `loadState`, POSTs to the new endpoint, reconciles
+    against the server's response on success, reverts the optimistic
+    swap and surfaces an inline error on failure. The error banner sits
+    above the meal rows with a × to dismiss.
+  - `copyingContent(_:from:)` and `setLoadedDays(_:_:)` helpers
+    rebuild `MealPlanDay` / `MealPlanWithDays` (both `let`-only) for
+    the optimistic update.
+
+Verified: `go build ./...`, `go vet ./...`, `go test ./...` clean.
+`xcodebuild iphonesimulator` clean. iOS sideload + on-device gesture
+verification pending Dave's test.

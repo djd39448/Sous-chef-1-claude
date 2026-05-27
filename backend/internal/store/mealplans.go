@@ -155,6 +155,79 @@ func (s *Store) UpdateMealPlanDayMeal(ctx context.Context, id int, mealName stri
 	return err
 }
 
+// SwapMealPlanDays atomically swaps the dish content between two
+// meal-plan days — meal_name, notes, recipe_content, recipe_image_prompt,
+// image_url — while leaving day_of_week, meal_plan_id, and the row ids
+// fixed. Used by the Plan-tab drag-to-reorder flow: the *meal* moves to
+// a different day; the day's position in the week doesn't. Returns the
+// two fresh rows in (aFresh, bFresh) order. Both ids must belong to the
+// same meal plan; ownership is enforced by the caller.
+func (s *Store) SwapMealPlanDays(ctx context.Context, aID, bID int) (MealPlanDay, MealPlanDay, error) {
+	if aID == bID {
+		return MealPlanDay{}, MealPlanDay{}, errors.New("cannot swap a day with itself")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return MealPlanDay{}, MealPlanDay{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	// Read both rows under the transaction so concurrent updates can't
+	// interleave between read and write. SELECT ... FOR UPDATE locks the
+	// rows until commit/rollback.
+	loadOne := func(id int) (MealPlanDay, error) {
+		row := tx.QueryRow(ctx,
+			`SELECT `+mealPlanDayCols+` FROM meal_plan_days
+			 WHERE id = $1 FOR UPDATE`, id)
+		return scanMealPlanDay(row)
+	}
+	a, err := loadOne(aID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return MealPlanDay{}, MealPlanDay{}, ErrNotFound
+	}
+	if err != nil {
+		return MealPlanDay{}, MealPlanDay{}, err
+	}
+	b, err := loadOne(bID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return MealPlanDay{}, MealPlanDay{}, ErrNotFound
+	}
+	if err != nil {
+		return MealPlanDay{}, MealPlanDay{}, err
+	}
+	if a.MealPlanID != b.MealPlanID {
+		return MealPlanDay{}, MealPlanDay{}, errors.New("cannot swap days from different plans")
+	}
+
+	// Write A's content into B's row, and vice versa.
+	const updateSQL = `UPDATE meal_plan_days
+	    SET meal_name = $2, notes = $3, recipe_content = $4,
+	        recipe_image_prompt = $5, image_url = $6
+	    WHERE id = $1`
+	if _, err := tx.Exec(ctx, updateSQL,
+		bID, a.MealName, a.Notes, a.RecipeContent, a.RecipeImagePrompt, a.ImageURL); err != nil {
+		return MealPlanDay{}, MealPlanDay{}, err
+	}
+	if _, err := tx.Exec(ctx, updateSQL,
+		aID, b.MealName, b.Notes, b.RecipeContent, b.RecipeImagePrompt, b.ImageURL); err != nil {
+		return MealPlanDay{}, MealPlanDay{}, err
+	}
+
+	// Read back the post-swap rows so the caller has the canonical state.
+	aFresh, err := loadOne(aID)
+	if err != nil {
+		return MealPlanDay{}, MealPlanDay{}, err
+	}
+	bFresh, err := loadOne(bID)
+	if err != nil {
+		return MealPlanDay{}, MealPlanDay{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return MealPlanDay{}, MealPlanDay{}, err
+	}
+	return aFresh, bFresh, nil
+}
+
 // SetMealPlanDayImage stores a generated image (data:image/png;base64,…)
 // URL on a meal-plan day. Called after a successful /regenerate-image
 // for an mpd target. The URL persists across launches so the iOS hero

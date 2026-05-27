@@ -72,6 +72,7 @@ FoodItem       { id, userId, canonicalName, displayName, quantity,
 | GET | `/api/kitchen/week/:weekStartDate` | | Plan + list for one week |
 | POST | `/api/kitchen/generate-meal-plan` | | AI-generate a weekly plan |
 | GET | `/api/kitchen/meal-plan-day/:id` | | One meal-plan day |
+| POST | `/api/kitchen/meal-plan-day/swap` | | Atomically swap two days' dishes |
 | POST | `/api/kitchen/generate-recipe/:dayId` | SSE | AI-generate a full recipe |
 | POST | `/api/kitchen/recipe-message` | SSE | Per-recipe chat (swap a meal) |
 | GET | `/api/kitchen/shopping-list` | | Most recent shopping list |
@@ -179,6 +180,23 @@ generation*), **replacing** any existing plan for that week, and creates one
 
 ### `GET /api/kitchen/meal-plan-day/:id`
 Returns the `MealPlanDay` for `:id` (with a `userId` field), ownership-checked.
+
+### `POST /api/kitchen/meal-plan-day/swap`
+Atomically swap the dish content between two meal-plan days. The
+`mealName`, `notes`, `recipeContent`, `recipeImagePrompt`, and
+`imageUrl` move between the two rows; `dayOfWeek`, `mealPlanId`, and
+the row ids stay put. Used by the Plan-tab drag-to-reorder gesture so
+photos and recipe content travel with the meal.
+
+Request body:
+```
+{ "aId": number,   // required
+  "bId": number }  // required, must differ from aId
+```
+Both rows must be owned by the caller and belong to the same meal
+plan. Returns `{ "a": MealPlanDay, "b": MealPlanDay }` with the
+post-swap rows. `400` if ids are missing/equal, `403` if either row
+isn't the caller's, `404` if either row doesn't exist.
 
 ### `POST /api/kitchen/generate-recipe/:dayId` — SSE
 Generates the full recipe for a meal-plan day and streams it as Markdown.
