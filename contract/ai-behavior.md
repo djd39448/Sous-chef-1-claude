@@ -448,3 +448,11 @@ Monday of that week, formatted `YYYY-MM-DD`:
 
 This matches the original `getWeekStartDate()` and must be reproduced exactly so
 plan/list weeks line up across tracks.
+
+**Time zone.** The week is anchored to the **user's local calendar**, not UTC.
+The iOS client computes the Monday string from `Calendar.current` and passes it
+to every endpoint that takes a week (see `api-spec.md` → *Week anchoring*).
+The backend's own `currentWeekStart()` runs in UTC and is used only as a
+fallback when the client omits the value — acceptable for batch / server-driven
+work, but the chat tools and the Plan-tab actions must use the client-supplied
+local Monday so the user's "this week" never disagrees across screens.

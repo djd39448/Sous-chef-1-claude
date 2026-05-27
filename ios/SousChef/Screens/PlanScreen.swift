@@ -308,7 +308,7 @@ struct PlanScreen: View {
         guard let d = DateUtil.dateFromISO(iso) else { return iso }
         let f = DateFormatter()
         f.dateFormat = "MMM d"
-        f.timeZone = DateUtil.utc.timeZone
+        f.timeZone = DateUtil.cal.timeZone
         return f.string(from: d)
     }
 
@@ -563,10 +563,11 @@ struct PlanScreen: View {
         isGeneratingShoppingList = true
         defer { isGeneratingShoppingList = false }
         let client = APIClient(baseURL: AppConfig.backendBaseURL, auth: auth)
-        struct Empty: Encodable {}
+        struct Body: Encodable { let weekStartDate: String }
         do {
             let _: ShoppingListWithItems = try await client.post(
-                "/api/kitchen/generate-shopping-list", Empty()
+                "/api/kitchen/generate-shopping-list",
+                Body(weekStartDate: currentWeek)
             )
             // Jump to the Shopping tab — the new list is now most-recent.
             goToTab(.shop)

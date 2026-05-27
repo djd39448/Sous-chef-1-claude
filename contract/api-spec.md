@@ -18,6 +18,15 @@ URL (`https://souschef-backend-production.up.railway.app` in production,
   `data: {"error":"..."}` then the stream ends.
 - **Timestamps** are ISO-8601 strings. **Dates** (`weekStartDate`) are
   `YYYY-MM-DD`.
+- **Week anchoring.** `weekStartDate` is the **user-local** Monday of the week
+  the user perceives themselves to be in. The iOS client computes it from
+  the device's `Calendar.current` and passes it on any endpoint that takes a
+  week (`POST /generate-meal-plan`, `GET /week/:date`, `POST /regenerate-days`,
+  the optional override on `POST /message` and `POST /generate-shopping-list`).
+  When the client omits the value, the backend falls back to its own
+  `now().UTC()` Monday — fine for server-driven jobs, but corner cases on
+  Sunday evenings (when local and UTC disagree about the week) require the
+  client value.
 
 ## Object shapes (response JSON)
 
@@ -117,7 +126,13 @@ Send a chat message; the assistant's reply streams back.
 Request body:
 ```
 { "content": string,            // required
-  "conversationId": number }    // optional; default = most recent conversation
+  "conversationId": number,     // optional; default = most recent conversation
+  "weekStartDate": string }     // optional YYYY-MM-DD; used by create_meal_plan
+                                // and create_shopping_list tools when the model
+                                // calls them. Falls back to the backend's UTC
+                                // Monday if absent. Always pass it from the
+                                // iOS client (local Monday) so chat-driven
+                                // creation matches the user's perceived week.
 ```
 
 Behavior:
@@ -216,9 +231,16 @@ treat it as a `weekStartDate` and look up by week. Returns
 `ShoppingListWithItems | null`.
 
 ### `POST /api/kitchen/generate-shopping-list`
-No body. Generates a shopping list for the user's most recent meal plan (see
-`ai-behavior.md` → *Shopping-list generation*), creates the list and its items,
-and returns the most recent `ShoppingListWithItems`.
+Request body (optional):
+```
+{ "weekStartDate": string }   // YYYY-MM-DD; default = backend's UTC Monday.
+                              // Pass it from the iOS client (local Monday) so
+                              // the list buckets into the same week the user
+                              // sees on the Plan tab.
+```
+Generates a shopping list for the user's most recent meal plan (see
+`ai-behavior.md` → *Shopping-list generation*), creates the list and its items
+for `weekStartDate`, and returns the most recent `ShoppingListWithItems`.
 
 ### `PATCH /api/kitchen/shopping-item/:id`
 Body `{ "checked": boolean }`. Sets the item's `checked` to `1`/`0`. Returns the

@@ -13,6 +13,33 @@ process. Implementation-level bug fixes belong in commit messages, not here.
 
 ---
 
+## 2026-05-27 — Week dates: UTC → user-local
+
+**Changed:** `weekStartDate` is now anchored to the iOS client's
+`Calendar.current` (the user's local Monday), not UTC. The iOS app passes
+the local Monday string to every endpoint that takes a week — including
+the new optional `weekStartDate` fields on `POST /api/kitchen/message`
+and `POST /api/kitchen/generate-shopping-list`. The backend's
+`currentWeekStart()` (UTC) becomes a fallback used only when the client
+omits the value. Contract updated: `api-spec.md` (new Week-anchoring
+convention + body fields on message / generate-shopping-list);
+`ai-behavior.md` (week-start helper now notes the local-anchoring rule).
+
+**Why:** the port had three definitions of "today" coexisting —
+HomeScreen and PlanScreen derived today's day-of-week from
+`Calendar.current` (local), while `DateUtil.todaysMondayString()`,
+CalendarScreen's month grid, and the backend's `currentWeekStart()` all
+used UTC. On Sunday evenings in EDT (when UTC has already rolled to
+Monday) PlanScreen would load *next* week's plan while HomeScreen still
+showed Sunday's meal as tonight's dinner. The calendar grid would
+highlight Monday while the rest of the app insisted today was still
+Sunday. Anchoring everything to the user's perceived calendar is the
+only fix that survives DST transitions and time-zone changes
+gracefully; the backend's UTC `currentWeekStart()` survives as a safe
+fallback for server-initiated work.
+
+---
+
 ## 2026-05-24 — Deploy target: AWS Fargate → Railway
 
 **Changed:** Switched the backend deployment plan from AWS ECS/Fargate

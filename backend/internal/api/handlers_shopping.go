@@ -269,9 +269,21 @@ func (s *Server) handleClearCheckedItems(w http.ResponseWriter, r *http.Request)
 }
 
 // handleGenerateShoppingList serves POST /api/kitchen/generate-shopping-list.
+//
+// Optional body: `{ "weekStartDate": "YYYY-MM-DD" }`. When present, the
+// generated list buckets into that week (the user's local Monday, sent by
+// the iOS client). When absent, falls back to the most-recent plan's
+// week — preserves the original no-body behavior.
 func (s *Server) handleGenerateShoppingList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID := auth.UserID(ctx)
+
+	var body struct {
+		WeekStartDate string `json:"weekStartDate"`
+	}
+	// Empty body is fine — preserve the original no-body call shape.
+	_ = decodeJSON(r, &body)
+	clientWeek := strings.TrimSpace(body.WeekStartDate)
 
 	mealNames := "general weekly meals"
 	var weekStart *string
@@ -292,6 +304,11 @@ func (s *Server) handleGenerateShoppingList(w http.ResponseWriter, r *http.Reque
 		weekStart = &ws
 		id := plan.ID
 		mealPlanID = &id
+	}
+	// Client-supplied week wins — it's the user's local Monday, the one
+	// the Plan tab is currently showing.
+	if clientWeek != "" {
+		weekStart = &clientWeek
 	}
 
 	existing := "none"

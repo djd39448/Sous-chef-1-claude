@@ -13,14 +13,19 @@ import (
 // executeChatTool dispatches a tool call the model made during the main chat.
 // Per contract/ai-behavior.md these run silently — their effects are picked up
 // when the client refetches resources after the stream ends.
-func (s *Server) executeChatTool(ctx context.Context, userID string, tc openai.ToolCall) error {
+//
+// `weekStart` is the user's local Monday from the chat request body
+// (empty when the client didn't send one). The create_meal_plan and
+// create_shopping_list tools use it so plans/lists bucket into the same
+// week the user sees on the Plan tab; fallback is the server's UTC Monday.
+func (s *Server) executeChatTool(ctx context.Context, userID string, tc openai.ToolCall, weekStart string) error {
 	switch tc.Name {
 	case "update_ingredients":
 		return s.toolUpdateIngredients(ctx, userID, tc.Arguments)
 	case "create_meal_plan":
-		return s.toolCreateMealPlan(ctx, userID, tc.Arguments)
+		return s.toolCreateMealPlan(ctx, userID, tc.Arguments, weekStart)
 	case "create_shopping_list":
-		return s.toolCreateShoppingList(ctx, userID, tc.Arguments)
+		return s.toolCreateShoppingList(ctx, userID, tc.Arguments, weekStart)
 	case "save_recipe":
 		return s.toolSaveRecipe(ctx, userID, tc.Arguments)
 	default:
@@ -134,8 +139,10 @@ func (s *Server) toolUpdateIngredients(ctx context.Context, userID, args string)
 }
 
 // toolCreateMealPlan handles the create_meal_plan tool: it replaces the
-// current week's plan with the meals the model chose.
-func (s *Server) toolCreateMealPlan(ctx context.Context, userID, args string) error {
+// caller's week with the meals the model chose. `weekStart` is the
+// client-supplied local Monday (YYYY-MM-DD); empty means fall back to
+// the server's UTC Monday.
+func (s *Server) toolCreateMealPlan(ctx context.Context, userID, args, weekStart string) error {
 	var p struct {
 		Meals []struct {
 			DayOfWeek int    `json:"dayOfWeek"`
@@ -162,14 +169,20 @@ func (s *Server) toolCreateMealPlan(ctx context.Context, userID, args string) er
 	if len(meals) == 0 {
 		return nil
 	}
-	_, err := s.store.ReplaceMealPlan(ctx, userID, currentWeekStart(), meals)
+	week := strings.TrimSpace(weekStart)
+	if week == "" {
+		week = currentWeekStart()
+	}
+	_, err := s.store.ReplaceMealPlan(ctx, userID, week, meals)
 	return err
 }
 
 // toolCreateShoppingList handles the create_shopping_list tool: it creates a
-// "Shopping List" for the current week and, per item, upserts a shopping-role
-// CFO and inserts a shopping_list_items row.
-func (s *Server) toolCreateShoppingList(ctx context.Context, userID, args string) error {
+// "Shopping List" for the caller's week and, per item, upserts a shopping-role
+// CFO and inserts a shopping_list_items row. `weekStart` is the
+// client-supplied local Monday (YYYY-MM-DD); empty means fall back to the
+// server's UTC Monday.
+func (s *Server) toolCreateShoppingList(ctx context.Context, userID, args, weekStart string) error {
 	var p struct {
 		Items []struct {
 			CanonicalName       string        `json:"canonical_name"`
@@ -184,7 +197,10 @@ func (s *Server) toolCreateShoppingList(ctx context.Context, userID, args string
 		return err
 	}
 
-	week := currentWeekStart()
+	week := strings.TrimSpace(weekStart)
+	if week == "" {
+		week = currentWeekStart()
+	}
 	var mealPlanID *int
 	if plan, err := s.store.GetMealPlanByWeek(ctx, userID, week); err == nil {
 		id := plan.ID

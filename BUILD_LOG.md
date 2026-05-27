@@ -868,3 +868,56 @@ What I did:
 Verified: `curl https://souschef-backend-production.up.railway.app/healthz`
 returns 200. iOS `xcodebuild iphoneos` clean. Phase 5's pending
 state is now resolved.
+
+---
+
+## 2026-05-27 · Fix: today / this-week misalignment across screens
+
+Three different "today" derivations had been coexisting in the app: HomeScreen
+and PlanScreen took today's day-of-week from `Calendar.current` (local), while
+`DateUtil.todaysMondayString()`, CalendarScreen's month grid, and the backend's
+`currentWeekStart()` all used UTC. On Sunday evenings in EDT the UTC clock had
+already rolled to Monday, so PlanScreen would jump to *next* week while
+HomeScreen still showed Sunday's meal as tonight's dinner; the calendar grid
+highlighted a different day than the rest of the app. See `CHANGE_LOG.md` →
+2026-05-27 for the contract pivot.
+
+Anchored everything to the user's local calendar:
+
+- **Contract.** `api-spec.md` got a new "Week anchoring" convention plus optional
+  `weekStartDate` body fields on `POST /api/kitchen/message` and
+  `POST /api/kitchen/generate-shopping-list`. `ai-behavior.md` notes the
+  local-anchoring rule in the week-start-helper section.
+
+- **iOS — `DateUtil`.** All of `todaysMondayString`, `dateFromISO`,
+  `date(for:weekStart:)`, `dayNumber`, `weekRangeString`, `shiftMonday`, and the
+  internal `parseLocalDate` now use `Calendar.current`. The public accessor was
+  renamed `DateUtil.utc` → `DateUtil.cal` so call sites read honestly.
+
+- **iOS — `CalendarScreen`.** Five call sites of `DateUtil.utc` (`monthTitle`,
+  `shiftMonth`, `gridCells`, `isLit`, `firstOfMonth`) switched to
+  `DateUtil.cal`. Comparison comment for `isLit` rewritten to say "local
+  midnight" instead of "UTC midnight."
+
+- **iOS — `ChatScreen`.** `SendBody` carries `weekStartDate:
+  DateUtil.todaysMondayString()` on every chat message so chat-driven
+  create_meal_plan / create_shopping_list tool calls bucket into the user's
+  perceived week.
+
+- **iOS — `PlanScreen`.** The Add-To-Shopping-List button sends the current
+  *viewing* week (not an empty body), so generating a list from a past or
+  future week's plan creates the list for that same week.
+
+- **Backend — `handlers_chat.go`.** `handleMessage` reads the new optional
+  `weekStartDate` body field and threads it through `executeChatTool` →
+  `toolCreateMealPlan` / `toolCreateShoppingList`. Both tool funcs take the
+  week as a new parameter and fall back to `currentWeekStart()` when blank.
+
+- **Backend — `handlers_shopping.go`.** `handleGenerateShoppingList` now
+  accepts an optional `{ "weekStartDate": ... }` body; the client-supplied
+  week wins over the most-recent-plan's week (which remains the fallback for
+  no-body callers, preserving the original contract).
+
+Verified: `go build ./...`, `go vet ./...`, `go test ./...` all clean.
+`xcodebuild iphonesimulator` clean. iOS sideload + real-device verification
+pending.

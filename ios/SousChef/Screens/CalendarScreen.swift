@@ -319,12 +319,13 @@ struct CalendarScreen: View {
     // MARK: Header / nav
 
     private var monthTitle: String {
-        // displayedMonth is built with DateUtil.utc, so we must format it in
-        // the same zone — otherwise EDT pushes May 1 00:00 UTC back to April
-        // 30 20:00 local and the title reads one month behind the grid.
+        // displayedMonth is built with DateUtil.cal (the user's local
+        // calendar). Format in the same zone so the title agrees with the
+        // grid across DST and locale boundaries.
         let f = DateFormatter()
         f.dateFormat = "MMMM yyyy"
-        f.timeZone = DateUtil.utc.timeZone
+        f.calendar = DateUtil.cal
+        f.timeZone = DateUtil.cal.timeZone
         return f.string(from: displayedMonth)
     }
 
@@ -332,7 +333,7 @@ struct CalendarScreen: View {
     // landed — both views share the same prev/today/next row now.
 
     private func shiftMonth(_ delta: Int) {
-        if let next = DateUtil.utc.date(byAdding: .month, value: delta, to: displayedMonth) {
+        if let next = DateUtil.cal.date(byAdding: .month, value: delta, to: displayedMonth) {
             displayedMonth = Self.firstOfMonth(next)
         }
     }
@@ -399,7 +400,7 @@ struct CalendarScreen: View {
 
     private var gridCells: [DayCell] {
         var out: [DayCell] = []
-        let cal = DateUtil.utc
+        let cal = DateUtil.cal
         let firstDayOfMonth = displayedMonth
         let weekdayOfFirst = cal.component(.weekday, from: firstDayOfMonth)   // 1=Sun
         let leading = weekdayOfFirst - 1
@@ -471,10 +472,10 @@ struct CalendarScreen: View {
             : data.shoppingLists.compactMap(\.weekStartDate)
         return weeks.contains { weekStart in
             guard let monday = DateUtil.dateFromISO(weekStart),
-                  let sunday = DateUtil.utc.date(byAdding: .day, value: 6, to: monday) else {
+                  let sunday = DateUtil.cal.date(byAdding: .day, value: 6, to: monday) else {
                 return false
             }
-            // Compare just the date parts (UTC midnight on both sides).
+            // Compare just the date parts (local midnight on both sides).
             return date >= monday && date <= sunday
         }
     }
@@ -551,7 +552,7 @@ struct CalendarScreen: View {
     // MARK: Utility
 
     private static func firstOfMonth(_ date: Date) -> Date {
-        let parts = DateUtil.utc.dateComponents([.year, .month], from: date)
-        return DateUtil.utc.date(from: parts) ?? date
+        let parts = DateUtil.cal.dateComponents([.year, .month], from: date)
+        return DateUtil.cal.date(from: parts) ?? date
     }
 }

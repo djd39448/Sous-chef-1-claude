@@ -22,6 +22,11 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Content        string `json:"content"`
 		ConversationID *int   `json:"conversationId"`
+		// Optional local-anchored Monday string (YYYY-MM-DD). Used by the
+		// create_meal_plan and create_shopping_list tools when the model
+		// calls them. Falls back to currentWeekStart() (UTC) when blank.
+		// See contract/api-spec.md → "Week anchoring".
+		WeekStartDate string `json:"weekStartDate"`
 	}
 	if err := decodeJSON(r, &body); err != nil || strings.TrimSpace(body.Content) == "" {
 		writeError(w, http.StatusBadRequest, "content is required")
@@ -102,8 +107,9 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Execute tool calls server-side; they are not surfaced in the stream.
+	weekStart := strings.TrimSpace(body.WeekStartDate)
 	for _, tc := range result.ToolCalls {
-		if err := s.executeChatTool(ctx, userID, tc); err != nil {
+		if err := s.executeChatTool(ctx, userID, tc, weekStart); err != nil {
 			log.Printf("chat tool %q: %v", tc.Name, err)
 		}
 	}

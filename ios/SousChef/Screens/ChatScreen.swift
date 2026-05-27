@@ -376,6 +376,11 @@ struct ChatScreen: View {
     private struct SendBody: Encodable {
         let content: String
         let conversationId: Int?
+        // The user's local Monday. The backend threads this into
+        // create_meal_plan / create_shopping_list tool calls so chat-driven
+        // plans/lists bucket into the same week the Plan tab is showing.
+        // See contract/api-spec.md → "Week anchoring".
+        let weekStartDate: String
     }
 
     private struct StreamChunk: Decodable {
@@ -411,7 +416,11 @@ struct ChatScreen: View {
         streamingContent = ""
         isStreaming = true
 
-        let body = SendBody(content: text, conversationId: conversation?.id)
+        let body = SendBody(
+            content: text,
+            conversationId: conversation?.id,
+            weekStartDate: DateUtil.todaysMondayString()
+        )
         let decoder = JSONDecoder()
         do {
             for try await event in client.stream(path: "/api/kitchen/message", body: body) {
