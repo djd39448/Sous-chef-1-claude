@@ -62,12 +62,24 @@ func (s *Server) handleCreateCookbookRecipe(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "title and content are required")
 		return
 	}
-	recipe, err := s.store.CreateCookbookRecipe(r.Context(), auth.UserID(r.Context()),
+	userID := auth.UserID(r.Context())
+	recipe, err := s.store.CreateCookbookRecipe(r.Context(), userID,
 		body.Title, body.Content, body.ImagePrompt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// Background image generation so the cookbook tile lands with a
+	// photo. Falls back to the title-templated prompt when the caller
+	// didn't pass one. See images.go.
+	prompt := ""
+	if body.ImagePrompt != nil {
+		prompt = strings.TrimSpace(*body.ImagePrompt)
+	}
+	if prompt == "" {
+		prompt = strings.ReplaceAll(recipeImagePromptTemplate, "<mealName>", strings.TrimSpace(body.Title))
+	}
+	s.kickoffCookbookImage(userID, recipe.ID, prompt)
 	writeJSON(w, http.StatusOK, recipe)
 }
 

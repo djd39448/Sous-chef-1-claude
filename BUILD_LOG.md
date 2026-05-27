@@ -921,3 +921,65 @@ Anchored everything to the user's local calendar:
 Verified: `go build ./...`, `go vet ./...`, `go test ./...` all clean.
 `xcodebuild iphonesimulator` clean. iOS sideload + real-device verification
 pending.
+
+---
+
+## 2026-05-27 · Eager image generation on plan create + every plan edit
+
+Dave's request: "I want to auto generate the whole weeks worth of pics when
+the plan is generated and also when the plan is updated. … The goal here is
+to not have blank photos on the home screen or on the weekly planning screens
+ever." Made it so. See `CHANGE_LOG.md` → 2026-05-27 for the pivot rationale
+(image gen moves from on-demand to eager + background).
+
+- **Backend — `internal/api/images.go` (new).** Two helpers:
+  - `kickoffMealDayImages(userID, days)` — for each day missing an image,
+    spawns a goroutine that calls `s.ai.GenerateImage` with a fresh
+    `context.WithTimeout(context.Background(), 5*time.Minute)` (survives the
+    HTTP request) and persists via `SetMealPlanDayImage`. Errors log and
+    drop — best-effort per row; the Recipe-screen regenerate button is the
+    user's manual retry.
+  - `kickoffCookbookImage(userID, recipeID, prompt)` — same shape, for
+    freshly-saved cookbook recipes.
+  - `mealDayImagePrompt(d)` picks the stored `recipe_image_prompt` (tuned
+    with plating language by the recipe-generation flow) or falls back to
+    the generic `recipeImagePromptTemplate` against the meal name.
+
+- **Backend wire-ins** — every code path that creates or replaces a row whose
+  `image_url` is null fires the helper:
+  - `handleGenerateMealPlan` — all 7 fresh days.
+  - `handleRegenerateDays` — just the replaced days (untouched days keep
+    their old image).
+  - `handlePatchMealPlanDay` — the single edited day (the store call cleared
+    `image_url`).
+  - `handleRecipeMessage` (update_meal tool path) — the swapped day.
+  - `toolCreateMealPlan` — chat-driven plan creation, all 7 days.
+  - `toolSaveRecipe` — chat-driven cookbook save.
+  - `handleCreateCookbookRecipe` — Recipe-screen bookmark save.
+
+- **iOS — `Networking/ImagePoller.swift` (new).** `APIClient.pollForReadyImages`
+  is a 12 × 5s (60s window) poller that yields a fresh `MealPlanWithDays` each
+  iteration that returns a plan, ending when every day has a non-empty
+  `imageUrl`. Network blips during a poll get swallowed and the next interval
+  retries.
+
+- **iOS wire-ins.**
+  - `PlanScreen` — after `generatePlan()` and `regenerateUnchecked()`, drain
+    the poll into `loadState` (only if the user is still on the same week).
+    Edit-mode regen and the empty-card "Plan my week" CTA both benefit.
+  - `HomeScreen` — after `generatePlan()`, poll the current week and patch
+    the loaded state's `plan` slot. The old `autoGenerateTonightImageIfNeeded`
+    helper plus the three pieces of session-local state (`autoImageURLs`,
+    `autoTried`, `autoGenerating`) were removed; backend coverage made them
+    dead code in the normal flow.
+
+- **iOS — `RecipeScreen` topButtons.** Brought back a manual regenerate-photo
+  button (the `swap` icon) sitting next to the bookmark. Backend eager
+  generation means this is no longer "fill the blank" — it's "I want a
+  different photo." The hero's tap-to-generate placeholder behavior stays
+  as the failure-mode fallback for the rare case where backend gen never
+  lands an image.
+
+Verified: `go build ./...`, `go vet ./...`, `go test ./...` clean.
+`xcodebuild iphonesimulator` clean. iOS sideload + real-device verification
+pending (backend deploy + phone install in the same session).

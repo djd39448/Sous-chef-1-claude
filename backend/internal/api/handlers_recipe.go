@@ -8,6 +8,7 @@ import (
 
 	"souschef/internal/auth"
 	"souschef/internal/openai"
+	"souschef/internal/store"
 )
 
 // handleGenerateRecipe serves POST /api/kitchen/generate-recipe/{dayId} — it
@@ -149,6 +150,11 @@ func (s *Server) handleRecipeMessage(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		updatedMeal = map[string]any{"mealName": args.MealName, "notes": notes}
+		// The store call cleared image_url; fire background image gen for
+		// the swapped meal. See images.go.
+		if day, _, err := s.store.GetMealPlanDay(ctx, *body.DayID); err == nil {
+			s.kickoffMealDayImages(auth.UserID(ctx), []store.MealPlanDay{day})
+		}
 	}
 
 	sse.send(map[string]any{"done": true, "updatedMeal": updatedMeal})

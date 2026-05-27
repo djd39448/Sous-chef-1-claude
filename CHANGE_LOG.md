@@ -13,6 +13,38 @@ process. Implementation-level bug fixes belong in commit messages, not here.
 
 ---
 
+## 2026-05-27 — Image generation: on-demand → eager + background
+
+**Changed:** Every code path that creates or replaces a `meal_plan_days`
+row now fires `gpt-image-1` in a background goroutine and persists the
+result on the row before the user ever sees a "Tap to generate"
+placeholder. New helpers live in `backend/internal/api/images.go`;
+callers are `handleGenerateMealPlan`, `handleRegenerateDays`,
+`handlePatchMealPlanDay`, `handleRecipeMessage` (update_meal path), the
+`create_meal_plan` and `save_recipe` chat tools, and
+`handleCreateCookbookRecipe`. iOS adds `APIClient.pollForReadyImages` —
+a 60-second 5s-cadence poller that the Home and Plan tabs drain after
+plan creation, replacing the single-day auto-gen path on HomeScreen
+(`autoGenerateTonightImageIfNeeded` and the related session-local
+state were removed). The Recipe screen's photo button comes back as a
+manual regenerate-this-photo retry — the previous removal (B-10)
+assumed image gen had no flow.
+
+**Why:** Dave's UX ask was "no blank photos on the Home or Plan
+screens, ever." On-demand generation made every list view render a
+"Tap to generate" placeholder until the user opened each recipe in
+isolation, which was busywork that the user shouldn't have to do. The
+old `autoGenerateTonightImageIfNeeded` half-fix on HomeScreen only
+covered tonight's hero — the week strip, Plan rows, Calendar week
+view, and Cookbook tiles were still placeholder-soup. Moving the
+trigger to the backend means a single contract: "if you create the
+row, you queue the photo," covering chat-driven creation, one-click
+Plan generation, recipe-chat swaps, and bookmark-saves uniformly. Cost
+is ~$0.07–0.30 per plan creation at the current `quality: "low"`
+setting — cheap enough that "always generate" beats "only when asked."
+
+---
+
 ## 2026-05-27 — Week dates: UTC → user-local
 
 **Changed:** `weekStartDate` is now anchored to the iOS client's

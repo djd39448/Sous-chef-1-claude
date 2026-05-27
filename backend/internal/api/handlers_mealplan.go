@@ -165,6 +165,9 @@ func (s *Server) handlePatchMealPlanDay(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// The store call cleared image_url; fire background image gen so the
+	// new meal lands with a photo. See images.go.
+	s.kickoffMealDayImages(auth.UserID(ctx), []store.MealPlanDay{day})
 	writeJSON(w, http.StatusOK, day)
 }
 
@@ -201,6 +204,10 @@ func (s *Server) handleGenerateMealPlan(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// Background image generation for every newly-created day so the
+	// Home/Plan/Calendar screens don't render placeholders. See
+	// images.go.
+	s.kickoffMealDayImages(userID, full.Days)
 	writeJSON(w, http.StatusOK, full)
 }
 
@@ -317,6 +324,15 @@ func (s *Server) handleRegenerateDays(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// Background image generation for just the replaced days — the
+	// untouched days still have their old images. See images.go.
+	replaced := make([]store.MealPlanDay, 0, len(target))
+	for _, d := range out.Days {
+		if target[d.DayOfWeek] {
+			replaced = append(replaced, d)
+		}
+	}
+	s.kickoffMealDayImages(userID, replaced)
 	writeJSON(w, http.StatusOK, out)
 }
 

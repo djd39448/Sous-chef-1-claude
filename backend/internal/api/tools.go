@@ -173,8 +173,14 @@ func (s *Server) toolCreateMealPlan(ctx context.Context, userID, args, weekStart
 	if week == "" {
 		week = currentWeekStart()
 	}
-	_, err := s.store.ReplaceMealPlan(ctx, userID, week, meals)
-	return err
+	full, err := s.store.ReplaceMealPlan(ctx, userID, week, meals)
+	if err != nil {
+		return err
+	}
+	// Background image generation for every newly-created day so the
+	// chat-driven plan lands with photos already populated. See images.go.
+	s.kickoffMealDayImages(userID, full.Days)
+	return nil
 }
 
 // toolCreateShoppingList handles the create_shopping_list tool: it creates a
@@ -279,6 +285,17 @@ func (s *Server) toolSaveRecipe(ctx context.Context, userID, args string) error 
 	if ip := strings.TrimSpace(p.ImagePrompt); ip != "" {
 		imagePrompt = &ip
 	}
-	_, err := s.store.CreateCookbookRecipe(ctx, userID, title, content, imagePrompt)
-	return err
+	recipe, err := s.store.CreateCookbookRecipe(ctx, userID, title, content, imagePrompt)
+	if err != nil {
+		return err
+	}
+	// Background image generation so the cookbook tile lands with a
+	// photo. Falls back to the title-templated prompt if the model
+	// didn't supply one. See images.go.
+	prompt := strings.TrimSpace(p.ImagePrompt)
+	if prompt == "" {
+		prompt = strings.ReplaceAll(recipeImagePromptTemplate, "<mealName>", title)
+	}
+	s.kickoffCookbookImage(userID, recipe.ID, prompt)
+	return nil
 }

@@ -469,9 +469,15 @@ struct RecipeScreen: View {
     // MARK: Top buttons
 
     private var topButtons: some View {
-        // Photo button removed: the sparkle placeholder on the hero IS
-        // the generate-image affordance. For .cookbook source we also
-        // show an edit pencil that opens the CookbookEditScreen.
+        // The "regenerate photo" button (swap icon) sits next to the
+        // bookmark and is the manual retry for an image the user
+        // doesn't like. Backend now generates photos in the background
+        // on plan-create / regen-days / single-day swap (see
+        // backend/internal/api/images.go), so the hero almost always
+        // has an image by the time the user gets here — this button is
+        // for "I want a different photo," not "fill the blank."
+        // For .cookbook source we also show an edit pencil that opens
+        // the CookbookEditScreen.
         HStack {
             heroButton("chevL", action: onClose)
             Spacer()
@@ -481,6 +487,11 @@ struct RecipeScreen: View {
                         showingEdit = true
                     }
                 }
+                heroButton("swap", color: Theme.ink) {
+                    Task { await regenerateImage() }
+                }
+                .disabled(isGeneratingImage || promptForImage.isEmpty)
+                .opacity(isGeneratingImage ? 0.6 : 1)
                 heroButton(saved ? "bookmarkF" : "bookmark",
                            color: saved ? Theme.terra : Theme.ink) {
                     Task { await saveToCookbook() }

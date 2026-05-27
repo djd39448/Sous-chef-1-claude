@@ -80,7 +80,9 @@ struct PlanScreen: View {
     /// One-click meal-plan generation. Posts to
     /// `/api/kitchen/generate-meal-plan` (no chat detour) and replaces
     /// the loaded plan with the result. The button stays disabled until
-    /// the call returns or errors.
+    /// the call returns or errors. After the initial plan lands we poll
+    /// the week endpoint so each background-generated image swaps in as
+    /// soon as the server persists it.
     @MainActor
     private func generatePlan() async {
         guard !isGenerating else { return }
@@ -94,10 +96,27 @@ struct PlanScreen: View {
                 Body(weekStartDate: currentWeek)
             )
             loadState = .loaded(plan: plan)
+            await pollImages(client: client, week: currentWeek)
         } catch let e as APIError where e.isBenignCancellation {
             return
         } catch {
             loadState = .failed("Couldn't generate a plan: \(error.localizedDescription)")
+        }
+    }
+
+    /// Drains the image-poll stream for `week`, updating `loadState`
+    /// on each yield so freshly-generated photos pop into the UI
+    /// without the user pulling to refresh. No-op if the screen has
+    /// already navigated away (the parent task's cancellation tears
+    /// down the AsyncStream).
+    @MainActor
+    private func pollImages(client: APIClient, week: String) async {
+        for await fresh in client.pollForReadyImages(weekStart: week) {
+            // Only apply if we're still viewing the same week — the user
+            // may have shifted while images were still landing.
+            if week == currentWeek {
+                loadState = .loaded(plan: fresh)
+            }
         }
     }
 
@@ -428,6 +447,10 @@ struct PlanScreen: View {
                 Body(weekStartDate: currentWeek, daysToRegenerate: daysToRegenerate)
             )
             loadState = .loaded(plan: updated)
+            // The backend cleared image_url on each replaced day and
+            // fired background gen for them. Poll until those new images
+            // land.
+            await pollImages(client: client, week: currentWeek)
         } catch let e as APIError where e.isBenignCancellation {
             return
         } catch {
