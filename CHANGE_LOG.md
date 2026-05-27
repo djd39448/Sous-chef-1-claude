@@ -13,6 +13,30 @@ process. Implementation-level bug fixes belong in commit messages, not here.
 
 ---
 
+## 2026-05-24 — Deploy target: AWS Fargate → Railway
+
+**Changed:** Switched the backend deployment plan from AWS ECS/Fargate
+(per `docs/AWS_DEPLOY.md`) to **Railway**. The backend now lives at
+`https://souschef-backend-production.up.railway.app` and the iOS app
+points there instead of the dev Mac mini's LAN IP. The
+backend `Dockerfile` was generalized from arm64-only (Graviton) to
+multi-arch via `$BUILDPLATFORM` / `$TARGETARCH`.
+
+**Why:** Railway gets the API onto the public internet in one
+`railway up` from the `backend/` directory. The AWS plan required
+Terraform manifests, ECR auth, ALB + ACM cert provisioning, IAM roles,
+and Secrets Manager wiring — meaningful learning for Dave's other
+project but heavy for a single Go service. Dave already has a Railway
+account and the AURELION API is hosted there, so the workflow is
+familiar.
+
+`docs/AWS_DEPLOY.md` stays in the repo as a reference for the future
+(useful for the `DevCore` project that does need AWS surface). The
+authoritative runbook for the current backend is now
+`docs/RAILWAY_DEPLOY.md`.
+
+---
+
 ## 2026-05-23 — Contract: added `save_recipe` as the fourth main-chat tool
 
 **Changed:** The contract (`contract/ai-behavior.md`) now lists **four**

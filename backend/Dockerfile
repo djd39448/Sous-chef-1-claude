@@ -1,14 +1,22 @@
 # Multi-stage build for the Sous Chef Go backend.
 #
-# Target: Linux / arm64 (AWS Graviton, cheaper Fargate). Build a static
-# CGO-free binary in the first stage, then copy it into a minimal
-# distroless image so the final layer is tiny (~15 MB) and runs as a
-# non-root user with no shell.
+# Builds for whatever architecture the runtime is — Railway runs on
+# amd64, an Apple-silicon dev box would build arm64. Buildx sets
+# TARGETOS / TARGETARCH automatically; the local `docker build` falls
+# back to the build host. Final image is distroless static (~15 MB),
+# runs as non-root.
+#
+# Earlier revisions hard-pinned `--platform=linux/arm64` for an
+# AWS Graviton plan; we pivoted to Railway (see CHANGE_LOG.md) and
+# this Dockerfile is now portable.
 
 # ─────────────────────────────────────────────────────────────
 # Stage 1 — build the binary
 # ─────────────────────────────────────────────────────────────
-FROM --platform=linux/arm64 golang:1.26-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
 
 WORKDIR /src
 
@@ -20,13 +28,13 @@ RUN go mod download
 COPY . .
 
 # Static binary, no CGO. -ldflags strips debug + symbol tables.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
 
 # ─────────────────────────────────────────────────────────────
 # Stage 2 — runtime image
 # ─────────────────────────────────────────────────────────────
-FROM --platform=linux/arm64 gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=build /out/server /server
 

@@ -834,3 +834,37 @@ Changes:
 
 Verified: `go build ./...` clean, backend restarted on `:8080`.
 `xcodebuild iphonesimulator` clean, zero warnings.
+
+---
+
+## 2026-05-24 · Phase 5: backend deployed to Railway
+
+Backend is live at
+**https://souschef-backend-production.up.railway.app**. iOS now
+talks to it instead of the dev Mac mini's LAN IP — the phone works
+from any network, no Wi-Fi dependency.
+
+What I did:
+
+- Generalized `backend/Dockerfile` from arm64-only (the old AWS
+  Graviton target) to multi-arch via `$BUILDPLATFORM` and
+  `$TARGETOS`/`$TARGETARCH`. Same distroless static binary; Railway
+  runs amd64, an Apple-silicon dev box builds arm64.
+- `railway init` in `backend/` created the project in Dave's
+  workspace. Deployed via `railway up` (uploads source, builds the
+  Dockerfile, deploys). Service name and project name both
+  `souschef-backend`.
+- Set `DATABASE_URL`, `SUPABASE_PROJECT_URL`, `OPENAI_API_KEY` via
+  `railway variables --set`. `PORT` is auto-provided by Railway and
+  read by `config.go`.
+- Generated the public domain with `railway domain`.
+- Flipped `ios/SousChef/Networking/AppConfig.swift` from
+  `http://192.168.1.132:8080` to the Railway HTTPS URL. ATS is happy
+  (TLS), no Info.plist exceptions needed.
+- New runbook at `docs/RAILWAY_DEPLOY.md`. `docs/AWS_DEPLOY.md` stays
+  for reference but is no longer authoritative — see CHANGE_LOG for
+  the pivot rationale.
+
+Verified: `curl https://souschef-backend-production.up.railway.app/healthz`
+returns 200. iOS `xcodebuild iphoneos` clean. Phase 5's pending
+state is now resolved.
