@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -285,21 +286,11 @@ func (s *Server) handleGenerateShoppingList(w http.ResponseWriter, r *http.Reque
 	_ = decodeJSON(r, &body)
 	clientWeek := strings.TrimSpace(body.WeekStartDate)
 
-	mealNames := "general weekly meals"
+	var days []store.MealPlanDay
 	var weekStart *string
 	var mealPlanID *int
 	if plan, err := s.store.GetMostRecentMealPlan(ctx, userID); err == nil {
-		if days, err := s.store.GetMealPlanDays(ctx, plan.ID); err == nil {
-			names := make([]string, 0, len(days))
-			for _, d := range days {
-				if strings.TrimSpace(d.MealName) != "" {
-					names = append(names, d.MealName)
-				}
-			}
-			if len(names) > 0 {
-				mealNames = strings.Join(names, ", ")
-			}
-		}
+		days, _ = s.store.GetMealPlanDays(ctx, plan.ID)
 		ws := plan.WeekStartDate
 		weekStart = &ws
 		id := plan.ID
@@ -317,7 +308,7 @@ func (s *Server) handleGenerateShoppingList(w http.ResponseWriter, r *http.Reque
 		existing = strings.Join(names, ", ")
 	}
 
-	items := s.generateShoppingItems(ctx, mealNames, existing)
+	items := s.generateShoppingItems(ctx, days, existing)
 	if len(items) == 0 {
 		items = fallbackShoppingItems()
 	}
@@ -356,14 +347,26 @@ type genShoppingItem struct {
 	Category string
 }
 
-// generateShoppingItems asks the model for a shopping list and parses it. It
-// returns nil on any failure, leaving the caller to use the fallback list.
-func (s *Server) generateShoppingItems(ctx context.Context, mealNames, existing string) []genShoppingItem {
+// generateShoppingItems asks the model for a shopping list and parses it.
+//
+// Each day is rendered as a block: meal name + the full recipe Markdown
+// when available, or a "(recipe not yet generated)" hint when the user
+// hasn't opened that day's recipe screen yet. This lets the model
+// enumerate real ingredients per recipe instead of inventing them from
+// the meal name alone — Dave reported the old "names only" prompt
+// produced lists with missing AND fabricated items.
+//
+// Returns nil on any failure, leaving the caller to use the fallback list.
+func (s *Server) generateShoppingItems(ctx context.Context, days []store.MealPlanDay, existing string) []genShoppingItem {
+	recipesBlock := buildShoppingRecipesBlock(days)
+
 	user := shoppingGenUserPrompt
-	user = strings.ReplaceAll(user, "<mealNames>", mealNames)
+	user = strings.ReplaceAll(user, "<recipesBlock>", recipesBlock)
 	user = strings.ReplaceAll(user, "<existingIngredients>", existing)
 
-	maxTokens := 1024
+	// 3500 ≈ a generous ceiling for a 7-day deduped list with
+	// quantities. The old 1024 cap routinely truncated the response.
+	maxTokens := 3500
 	content, err := s.ai.ChatJSON(ctx, openai.ChatParams{
 		Model: "gpt-4.1",
 		Messages: []openai.Message{
@@ -376,6 +379,37 @@ func (s *Server) generateShoppingItems(ctx context.Context, mealNames, existing 
 		return nil
 	}
 	return parseShoppingItemsJSON(content)
+}
+
+// buildShoppingRecipesBlock renders one block per meal-plan day for the
+// shopping-list user prompt. Days with recipe_content get the full
+// recipe Markdown so the model can enumerate real ingredients; days
+// without get a "(recipe not yet generated)" marker so the model knows
+// to be conservative for those.
+func buildShoppingRecipesBlock(days []store.MealPlanDay) string {
+	dayNames := []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
+	if len(days) == 0 {
+		return "(no meals planned — generate a general weekly shopping list)"
+	}
+	var b strings.Builder
+	for i, d := range days {
+		name := strings.TrimSpace(d.MealName)
+		if name == "" {
+			continue
+		}
+		dayLabel := ""
+		if d.DayOfWeek >= 0 && d.DayOfWeek < len(dayNames) {
+			dayLabel = " (" + dayNames[d.DayOfWeek] + ")"
+		}
+		fmt.Fprintf(&b, "--- Meal %d: %s%s ---\n", i+1, name, dayLabel)
+		if d.RecipeContent != nil && strings.TrimSpace(*d.RecipeContent) != "" {
+			b.WriteString(strings.TrimSpace(*d.RecipeContent))
+			b.WriteString("\n\n")
+		} else {
+			b.WriteString("(recipe not yet generated — infer the most common standard ingredients for this dish, but be conservative)\n\n")
+		}
+	}
+	return b.String()
 }
 
 // parseShoppingItemsJSON parses a model shopping-list response of the form

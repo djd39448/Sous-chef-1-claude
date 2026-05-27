@@ -1033,3 +1033,46 @@ change.
 Verified: `go build ./...`, `go vet ./...`, `go test ./...` clean.
 `xcodebuild iphonesimulator` clean. iOS sideload + on-device gesture
 verification pending Dave's test.
+
+---
+
+## 2026-05-27 · Shopping-list accuracy: pass recipe contents, tighten prompt
+
+Dave's report: the generated shopping list "leaves a lot of items off"
+and "may be inventing some." Root cause: the old prompt only got meal
+*names* (e.g. "Korean-Inspired Veggie Bibimbap"), so the model had to
+infer every ingredient list from the dish name alone. That's the exact
+failure mode that produces both missing and fabricated items. Compounded
+by `maxTokens = 1024`, which truncates the JSON output on a real
+7-day list.
+
+- **prompts.go.** `shoppingGenSystemPrompt` rewritten as a numbered
+  rules block: enumerate every ingredient that appears in the recipes
+  provided, combine duplicates across meals with summed quantities,
+  exclude items the user already has, do not invent ingredients,
+  category must be one of the nine fixed strings, lowercase singular
+  names, conservative on recipes that haven't been generated yet.
+  `shoppingGenUserPrompt` now embeds a `<recipesBlock>` placeholder
+  rather than a flat `<mealNames>` string.
+
+- **handlers_shopping.go — `buildShoppingRecipesBlock(days)`.** New
+  helper that renders one block per meal-plan day: meal name + day-of-
+  week label, then the full `recipe_content` Markdown when present, or
+  a `"(recipe not yet generated — infer the most common standard
+  ingredients for this dish, but be conservative)"` marker when not.
+  This is the incremental improvement: every recipe the user opens
+  feeds the next shopping-list call with real ingredients.
+
+- **handlers_shopping.go — `generateShoppingItems(days, existing)`.**
+  Signature changed from `(mealNames, existing string)` to
+  `(days []store.MealPlanDay, existing string)`. The handler passes
+  the full days slice (including `RecipeContent`) directly. `maxTokens`
+  bumped 1024 → 3500 so a fully-itemized 7-day list never truncates.
+
+Cost note: input tokens go up meaningfully when recipes are included
+(~3.5–7k extra per call), but we're nowhere near gpt-4.1's context
+window and the per-call cost stays well under $0.05.
+
+Verified: `go build ./...`, `go vet ./...`, `go test ./...` clean.
+iOS unchanged — frontend doesn't need a rebuild. Deploy + Dave's
+real-list check pending.
