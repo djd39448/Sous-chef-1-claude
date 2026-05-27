@@ -228,6 +228,17 @@ struct RecipeScreen: View {
         if content.isEmpty && errorMessage == nil {
             errorMessage = "The recipe didn't come through. Tap retry to try again."
         }
+
+        // Auto-save the freshly-generated recipe to the cookbook. The
+        // bookmark icon flips to filled as a confirmation; the user
+        // can still delete from the Cookbook tab if they don't want
+        // it. Skip when the stream errored or returned no content.
+        // Silent on failure — a network blip during auto-save would
+        // otherwise paint a red error card over a freshly-rendered
+        // recipe, which reads as broken.
+        if !content.isEmpty && errorMessage == nil && !saved {
+            await saveToCookbook(surfaceErrors: false)
+        }
     }
 
     // MARK: Scroll content
@@ -555,12 +566,14 @@ struct RecipeScreen: View {
     }
 
     /// Persist the current recipe to the cookbook via
-    /// `POST /api/kitchen/cookbook`. Only the meal-plan-day source path can
-    /// actually trigger this — cookbook recipes start `saved == true` so the
-    /// button is disabled, and the `.disabled` modifier above also blocks
-    /// re-saves while one is in flight or while a stream is still running.
+    /// `POST /api/kitchen/cookbook`. Called automatically when
+    /// `streamGenerate` finishes with content, and manually when the
+    /// user taps the bookmark icon. `surfaceErrors` is true for the
+    /// manual path (errors land in the recipe error card) and false
+    /// for auto-save (we don't want a network blip on first view to
+    /// scare the user with a red banner over their recipe).
     @MainActor
-    private func saveToCookbook() async {
+    private func saveToCookbook(surfaceErrors: Bool = true) async {
         guard !saved, !content.isEmpty, !isSaving else { return }
         isSaving = true
         saveError = nil
@@ -577,7 +590,9 @@ struct RecipeScreen: View {
             // No-op — the view went away mid-save.
         } catch {
             saveError = error.localizedDescription
-            errorMessage = "Couldn't save: \(error.localizedDescription)"
+            if surfaceErrors {
+                errorMessage = "Couldn't save: \(error.localizedDescription)"
+            }
         }
         isSaving = false
     }
